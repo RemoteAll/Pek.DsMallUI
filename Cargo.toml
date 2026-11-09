@@ -1,0 +1,42 @@
+[package]
+name = "pek-dsmallui"
+version = "0.1.0"
+edition = "2021"
+description = "Pek DsMallUI（Rust）：猿人易 NCube 后台 UI 的统一封装——UEditor 后端、上传下载、Area 控制器与 Razor 视图约定，复用 DH.RustBase"
+authors = ["PeiKeSmart", "湖北登灏科技有限公司 <dingchuan@deng-hao.com>"]
+license = "MIT"
+repository = "https://github.com/PeiKeSmart/Pek.Framework"
+keywords = ["dsmall", "ncube", "admin-ui", "ueditor", "mvc"]
+categories = ["web-programming"]
+
+[dependencies]
+# DH 基础库：HTTP 服务/路由/控制器（C# 风格）+ Razor 子集视图引擎 + 静态资源 + 出网客户端
+dhrust = { path = "../DH.RustBase", features = ["net", "razor"] }
+serde = { version = "1", features = ["derive"] }
+# preserve_order：ueconfig.json 原样回吐（UEditor 前端对字段顺序不敏感，但便于人读比对）
+serde_json = { version = "1", features = ["preserve_order"] }
+# 涂鸦（scrawl）上传是 base64 data URL；与 dhrust 使用同一版本，不新增供应链分支
+base64 = "0.22"
+# {yyyy}/{mm}/{dd}/{hh}/{ii}/{ss} 等路径时间片（与 dhrust 同一版本）
+chrono = "0.4"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[features]
+# 默认启用远程图片抓取（UEditor catchimage）；需要 HTTPS 出网能力
+default = ["crawler"]
+crawler = ["dhrust/http-tls"]
+
+[profile.release]
+lto = "thin"
+strip = true
+incremental = true
+
+# 日常调测档（与生态各仓一致）：继承 release 的优化等级，但关闭 LTO、并行 codegen + 增量
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true

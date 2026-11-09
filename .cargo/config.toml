@@ -1,0 +1,10 @@
+# 本机 crates.io 直连不稳定，使用国内镜像（rsproxy）
+[source.crates-io]
+replace-with = "rsproxy-sparse"
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"
+
+# Windows 宿主链接器：MSVC link.exe 慢（PDB + 杀软扫描），换随工具链自带的 rust-lld
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"

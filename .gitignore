@@ -1,0 +1,20 @@
+# 构建产物
+/target/
+**/*.rs.bk
+
+# 回归报告（tools/regression.ps1 产出）
+/artifacts/
+
+# 运行期产物（示例/本地验证）
+/wwwroot/upload/
+# 由 materialize_defaults() 从 assets/ueconfig.json 物化生成（单一真相源在 assets）
+/wwwroot/ueconfig.json
+/data/
+
+# 编辑器
+.vs/
+.idea/
+*.user
+
+# 同步而来的第三方静态资源（由 tools/sync-wwwroot.ps1 从 C# 参考工程拷贝，不入库）
+/wwwroot/static/

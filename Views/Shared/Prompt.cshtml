@@ -1,0 +1,33 @@
+@{
+    // Razor 子集不支持 `Layout = null`（引擎要求字符串）；不声明 Layout 即独立页面
+}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <title>@Model.title</title>
+    <style>
+        body { background: #fff; font-family: "Microsoft Yahei", Arial, sans-serif; color: #333; }
+        .system-message { margin: 100px auto; width: 420px; border: 1px solid #d4d4d4; border-radius: 5px; overflow: hidden; }
+        .system-message h1 { margin: 0; padding: 10px 16px; font-size: 16px; font-weight: normal; background: #ff9933; color: #fff; }
+        .system-message .body { padding: 24px 16px; text-align: center; }
+        .system-message a { color: #1677ff; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="system-message">
+        <h1>@Model.title</h1>
+        <div class="body">
+            <p>@Model.message</p>
+            @if (Model.backUrl != "") {
+            <p><a href="@Model.backUrl">返回</a></p>
+            }
+        </div>
+    </div>
+    @if (Model.autoBack) {
+    <script type="text/javascript">
+        setTimeout(function () { window.location.href = "@Model.backUrl"; }, 1500);
+    </script>
+    }
+</body>
+</html>

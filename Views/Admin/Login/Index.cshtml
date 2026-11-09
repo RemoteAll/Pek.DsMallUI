@@ -1,0 +1,42 @@
+@{
+    // Razor 子集不支持 `Layout = null`（引擎要求字符串）；不声明 Layout 即独立页面
+}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>登录 - @Model.displayName</title>
+    <link rel="stylesheet" href="/static/admin/css/admin.css">
+    <style>
+        body { background: #f2f4f7; }
+        .login { width: 360px; margin: 120px auto; background: #fff; border-radius: 6px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,.08); }
+        .login h2 { margin: 0 0 20px; font-size: 18px; text-align: center; }
+        .login-row { margin-bottom: 14px; }
+        .login-row label { display: block; margin-bottom: 6px; color: #555; }
+        .login-row input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #d9d9d9; border-radius: 4px; }
+        .login-btn { width: 100%; padding: 10px; border: 0; border-radius: 4px; background: #1677ff; color: #fff; font-size: 15px; cursor: pointer; }
+        .login-error { color: #d93026; margin-bottom: 12px; }
+    </style>
+</head>
+<body>
+    <div class="login">
+        <h2>@Model.displayName</h2>
+        @if (Model.hasError) {
+        <div class="login-error">@Model.error</div>
+        }
+        <form method="post" action="/admin/login/login">
+            <input type="hidden" name="returnUrl" value="@Model.returnUrl">
+            <div class="login-row">
+                <label for="UserName">用户名</label>
+                <input type="text" id="UserName" name="UserName" value="@Model.userName" autocomplete="username" required>
+            </div>
+            <div class="login-row">
+                <label for="Password">密码</label>
+                <input type="password" id="Password" name="Password" autocomplete="current-password" required>
+            </div>
+            <button type="submit" class="login-btn">登录</button>
+        </form>
+    </div>
+</body>
+</html>

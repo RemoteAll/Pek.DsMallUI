@@ -1,0 +1,101 @@
+@{
+    Layout = "Shared/_Layout";
+}
+<div class="admin-panel">
+    <div class="admin-panel-head">
+        <h2>站点设置</h2>
+        <p class="admin-tip">对应 C# 参考工程 <code>Areas/Admin/Controllers/ConfigController</code></p>
+    </div>
+
+    @if (Model.saved) {
+    <div class="admin-alert admin-alert-ok">保存成功</div>
+    }
+
+    <form method="post" action="/admin/config/updatebase" class="admin-form">
+        <div class="admin-form-row">
+            <label for="SiteName">网站名称</label>
+            <input type="text" id="SiteName" name="SiteName" value="@Model.siteName" required>
+        </div>
+        <div class="admin-form-row">
+            <label for="DisplayName">系统名称</label>
+            <input type="text" id="DisplayName" name="DisplayName" value="@Model.displayName">
+        </div>
+        <div class="admin-form-row">
+            <label for="SeoTitle">SEO 标题</label>
+            <input type="text" id="SeoTitle" name="SeoTitle" value="@Model.seoTitle">
+        </div>
+        <div class="admin-form-row">
+            <label for="SeoKey">SEO 关键字</label>
+            <input type="text" id="SeoKey" name="SeoKey" value="@Model.seoKey">
+        </div>
+        <div class="admin-form-row">
+            <label for="SeoDescribe">SEO 描述</label>
+            <textarea id="SeoDescribe" name="SeoDescribe" rows="3">@Model.seoDescribe</textarea>
+        </div>
+        <div class="admin-form-row">
+            <label for="Registration">备案信息</label>
+            <input type="text" id="Registration" name="Registration" value="@Model.registration">
+        </div>
+        <div class="admin-form-row">
+            <label for="Copyright">版权信息</label>
+            <input type="text" id="Copyright" name="Copyright" value="@Model.copyright">
+        </div>
+        <div class="admin-form-row">
+            <label for="CustomerTel">客服电话</label>
+            <input type="text" id="CustomerTel" name="CustomerTel" value="@Model.customerTel">
+        </div>
+        <div class="admin-form-row">
+            <label for="CustomerEmail">客服邮箱</label>
+            <input type="text" id="CustomerEmail" name="CustomerEmail" value="@Model.customerEmail">
+        </div>
+        <div class="admin-form-row">
+            <label for="UrlSuffix">URL 后缀</label>
+            <input type="text" id="UrlSuffix" name="UrlSuffix" value="@Model.urlSuffix">
+        </div>
+        <div class="admin-form-row">
+            <label for="Statistical">统计代码</label>
+            <textarea id="Statistical" name="Statistical" rows="3">@Model.statistical</textarea>
+        </div>
+        <div class="admin-form-row">
+            <label for="PageFoot">页脚</label>
+            <textarea id="PageFoot" name="PageFoot" rows="3">@Model.pageFoot</textarea>
+        </div>
+        <div class="admin-form-row">
+            <label for="HeaderCustomHtml">头部自定义 HTML</label>
+            <textarea id="HeaderCustomHtml" name="HeaderCustomHtml" rows="3">@Model.headerCustomHtml</textarea>
+        </div>
+        <div class="admin-form-row">
+            <label for="FooterCustomHtml">底部自定义 HTML</label>
+            <textarea id="FooterCustomHtml" name="FooterCustomHtml" rows="3">@Model.footerCustomHtml</textarea>
+        </div>
+        <div class="admin-form-row">
+            <label for="curDomainUrl">当前域名</label>
+            <input type="text" id="curDomainUrl" name="curDomainUrl" value="@Model.curDomainUrl" placeholder="https://example.com">
+        </div>
+        @if (Model.hasLanguages) {
+        <div class="admin-form-row">
+            <label>多语言</label>
+            <div class="admin-checkbox-list">
+                @foreach (var lang in Model.languages) {
+                <label class="admin-checkbox"><input type="checkbox" name="LanguageIds" value="@lang.id" checked> @lang.name</label>
+                }
+            </div>
+        </div>
+        }
+        <div class="admin-form-actions">
+            <button type="submit" class="admin-btn admin-btn-primary">保存设置</button>
+        </div>
+    </form>
+</div>
+
+@section Scripts {
+<script type="text/javascript">
+    var form = document.querySelector('.admin-form');
+    form.addEventListener('submit', function (event) {
+        if (!document.getElementById('SiteName').value.trim()) {
+            event.preventDefault();
+            window.alert('网站名称不可为空');
+        }
+    });
+</script>
+}

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>@Model.title</title>
+    <link rel="stylesheet" href="/static/admin/css/admin.css">
+    <link rel="stylesheet" href="/static/plugins/js/layui/css/layui.css">
+    @await RenderSectionAsync("Head", false)
+</head>
+<body class="admin-body">
+    <div class="admin-header">
+        <span class="admin-header-title">@Model.displayName</span>
+        <span class="admin-header-user">@Model.userName</span>
+    </div>
+    <div class="admin-main">
+        @RenderBody()
+    </div>
+    <script src="/static/plugins/jquery214.min.js"></script>
+    <script src="/static/plugins/layer/layer.js"></script>
+    <script type="text/javascript">
+        var ADMINSITEURL = "/admin";
+        function dsmalluiConfirm(form, message) {
+            if (window.layer) {
+                layer.confirm(message, { btn: ['确定', '取消'] }, function (index) {
+                    form.submit();
+                    layer.close(index);
+                });
+                return false;
+            }
+            return window.confirm(message);
+        }
+    </script>
+    @await RenderSectionAsync("Scripts", false)
+</body>
+</html>
