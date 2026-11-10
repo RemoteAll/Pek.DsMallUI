@@ -3,15 +3,21 @@
 //! 运行：
 //!
 //! ```text
-//! cargo run --example admin_server            # 默认 127.0.0.1:8080
-//! cargo run --example admin_server -- 8099    # 指定端口
+//! cargo run --example admin_server                 # 默认 127.0.0.1:8080，区域 Biz
+//! cargo run --example admin_server -- 8099         # 指定端口
+//! cargo run --example admin_server -- 8099 Admin   # 指定端口 + 区域名（默认 Admin 也可）
+//! DSMALLUI_ADMIN_AREA=Admin cargo run --example admin_server   # 用环境变量指定区域
 //! ```
 //!
-//! 可验证的入口：
-//! - `GET  /admin/config/index`        站点设置页（Razor 子集渲染）
-//! - `POST /admin/config/updatebase`   保存设置（默认账号登录后可用）
-//! - `GET  /admin/login/index`         登录页
-//! - `POST /admin/login/login`         登录（`UserName=admin&Password=admin123`）
+//! 区域名对应 C# 的 `DHSetting.Current.AdminArea`：默认 `Admin`，本项目用 `Biz`，
+//! 路由与视图目录随之变化（`/biz/...`、`Views/Biz/...`）。
+//!
+//! 可验证的入口（区域为 `Biz` 时）：
+//! - `GET  /biz/home/index`             后台首页（控制台 + 菜单）
+//! - `GET  /biz/config/index`           站点设置页（Razor 子集渲染）
+//! - `POST /biz/config/updatebase`      保存设置
+//! - `GET  /biz/login/index`            登录页
+//! - `POST /biz/login/login`            登录（`UserName=admin&Password=admin123`）
 //! - `GET  /fileuploader?action=config` UEditor 配置
 //! - `POST /fileuploader?action=uploadimage` UEditor 图片上传（multipart，字段 `upfile`）
 
@@ -23,10 +29,13 @@ use pek_dsmallui::{DsMallUi, MemoryBackend};
 
 #[tokio::main]
 async fn main() {
-    let port: u16 = std::env::args()
-        .nth(1)
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(8080);
+    let mut args = std::env::args().skip(1);
+    let port: u16 = args.next().and_then(|p| p.parse().ok()).unwrap_or(8080);
+    // 区域名：命令行 > 环境变量 > 默认 Biz（示例代表一个消费方项目）
+    let area_name = args
+        .next()
+        .or_else(|| std::env::var("DSMALLUI_ADMIN_AREA").ok())
+        .unwrap_or_else(|| "Biz".to_string());
 
     // 示例数据源：admin / admin123（生产请换成自己的 AdminBackend 实现）
     let backend = Arc::new(MemoryBackend::new());
@@ -35,6 +44,7 @@ async fn main() {
         .web_root("wwwroot")
         .views_root("Views")
         .upload_path("upload")
+        .admin_area(&area_name)
         .backend(backend)
         .build()
     {
@@ -85,9 +95,15 @@ async fn main() {
         }
     };
 
+    let route_prefix = ui.admin().route_prefix();
     println!("Pek.DsMallUI 示例已启动（Ctrl+C 退出）：");
-    println!("  后台设置页   http://{addr}/admin/config/index");
-    println!("  登录页       http://{addr}/admin/login/index   （admin / admin123）");
+    println!(
+        "  后台区域     {}（路由前缀 {route_prefix}）",
+        ui.admin_area()
+    );
+    println!("  后台首页     http://{addr}{route_prefix}/home/index");
+    println!("  后台设置页   http://{addr}{route_prefix}/config/index");
+    println!("  登录页       http://{addr}{route_prefix}/login/index   （admin / admin123）");
     println!("  UEditor 配置 http://{addr}/fileuploader?action=config");
     println!("  上传根目录   {}", ui.upload_root().display());
 

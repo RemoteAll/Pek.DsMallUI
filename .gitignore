@@ -18,3 +18,5 @@
 
 # 同步而来的第三方静态资源（由 tools/sync-wwwroot.ps1 从 C# 参考工程拷贝，不入库）
 /wwwroot/static/
+# 示例按 Biz 区域运行时物化生成的视图副本（规范默认视图保持在 Views/Admin）
+/Views/Biz/

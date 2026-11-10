@@ -12,6 +12,7 @@
 //! let ui = DsMallUi::builder()
 //!     .web_root("wwwroot")
 //!     .views_root("Views")
+//!     .admin_area("Biz")            // 后台区域名（默认 Admin；路由变 /biz/...）
 //!     .backend(Arc::new(MemoryBackend::new()))
 //!     .build()?;
 //!
@@ -40,6 +41,8 @@ use crate::views::Views;
 
 /// 默认上传目录名（C# `UploadPath` 默认值同为 `upload`）。
 pub const DEFAULT_UPLOAD_PATH: &str = "upload";
+/// 默认后台区域名（与 C# `AdminArea.AreaName` 默认值一致：`Admin`）。
+pub const DEFAULT_ADMIN_AREA: &str = crate::area::DEFAULT_AREA;
 /// 默认请求体上限（与 `dhrust::net::http::DEFAULT_MAX_BODY_SIZE` 一致）。
 pub const DEFAULT_MAX_UPLOAD_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -90,7 +93,12 @@ impl DsMallUi {
         &self.admin
     }
 
-    /// 把路由挂到 `Router`：`/fileuploader`、`/Upload/*`、`/admin/config/*`、`/admin/login/*`。
+    /// 后台区域名（Pascal，如 `Admin` / `Biz`）。
+    pub fn admin_area(&self) -> &str {
+        self.admin.area_name()
+    }
+
+    /// 把路由挂到 `Router`：`/fileuploader`、`/Upload/*`、`/{area}/home|config|login/*`。
     pub fn mount(&self, router: &mut Router) {
         self.upload.mount(router);
         self.admin.mount(router);
@@ -103,10 +111,10 @@ impl DsMallUi {
 
     /// 首次部署：把内置视图与 `ueconfig.json` 落到磁盘（**只补缺失，不覆盖**）。
     ///
-    /// - 视图 → `<views_root>/…`；
+    /// - 视图 → `<views_root>/{area}/…`（默认区域落 `Views/Admin/…`）；
     /// - 配置 → `<web_root>/ueconfig.json`（若已存在则跳过）。
     pub fn materialize_defaults(&self) -> Result<usize, String> {
-        let written = crate::views::materialize(self.views.root())
+        let written = crate::views::materialize_for(self.views.root(), self.admin.area_name())
             .map_err(|e| format!("落地默认视图失败（{}）：{e}", self.views.root().display()))?;
         let config_path = self.web_root.join("ueconfig.json");
         if !config_path.is_file() {
@@ -128,6 +136,7 @@ pub struct DsMallUiBuilder {
     upload_path: String,
     views_root: PathBuf,
     backend: Arc<dyn AdminBackend>,
+    admin_area: String,
     ueditor_config: Option<PathBuf>,
     max_upload_bytes: u64,
 }
@@ -139,6 +148,7 @@ impl Default for DsMallUiBuilder {
             upload_path: DEFAULT_UPLOAD_PATH.to_string(),
             views_root: PathBuf::from("Views"),
             backend: Arc::new(MemoryBackend::new()),
+            admin_area: DEFAULT_ADMIN_AREA.to_string(),
             ueditor_config: None,
             max_upload_bytes: DEFAULT_MAX_UPLOAD_BYTES,
         }
@@ -167,6 +177,15 @@ impl DsMallUiBuilder {
     /// 后台数据源（默认 [`MemoryBackend`]，仅示例用）。
     pub fn backend(mut self, backend: Arc<dyn AdminBackend>) -> Self {
         self.backend = backend;
+        self
+    }
+
+    /// 后台区域名（默认 `Admin`；本项目可改成 `Biz` 等，路由/视图随之变化）。
+    ///
+    /// 对齐 C# `DHSetting.Current.AdminArea`：在消费方读取自己的配置后传进来即可。
+    /// 非法名称（空 / 非字母开头 / 含路径符号）会在 [`DsMallUiBuilder::build`] 报错。
+    pub fn admin_area(mut self, area: impl Into<String>) -> Self {
+        self.admin_area = area.into();
         self
     }
 
@@ -201,7 +220,9 @@ impl DsMallUiBuilder {
 
         let views = Views::new(self.views_root);
         let upload = UploadController::new(service, upload_root.clone());
-        let admin = AdminArea::new(self.backend, views.clone());
+        let admin = AdminArea::new(self.backend, views.clone())
+            .with_area_name(&self.admin_area)?
+            .with_upload_prefix(&upload_prefix);
 
         Ok(DsMallUi {
             web_root: self.web_root,
@@ -230,7 +251,27 @@ mod tests {
         let ui = DsMallUi::builder().build().unwrap();
         assert_eq!(ui.upload_prefix(), "/upload");
         assert!(ui.upload_root().ends_with("upload"));
+        assert_eq!(ui.admin_area(), "Admin");
+        assert_eq!(ui.admin().home(), "/admin/home/index");
         assert!(ui.ueditor().config().get_str("imageActionName").is_some());
+    }
+
+    #[test]
+    fn builder_honours_admin_area() {
+        let ui = DsMallUi::builder().admin_area("biz").build().unwrap();
+        assert_eq!(ui.admin_area(), "Biz");
+        assert_eq!(ui.admin().route_prefix(), "/biz");
+        assert_eq!(ui.admin().home(), "/biz/home/index");
+    }
+
+    #[test]
+    fn builder_rejects_invalid_admin_area() {
+        let err = DsMallUi::builder()
+            .admin_area("a/b")
+            .build()
+            .err()
+            .expect("非法区域名必须报错");
+        assert!(err.contains("只能包含"), "{err}");
     }
 
     #[test]

@@ -9,6 +9,7 @@
 //! | 能力 | 入口 | C# 对应 |
 //! |---|---|---|
 //! | 门面/装配 | [`DsMallUi::builder`] | `PekStartup`（`IPekStartup`） |
+//! | 区域约定 | [`area`]（默认 `Admin`，可改 `Biz`） | `DHSetting.Current.AdminArea` / `AdminArea.AreaName` |
 //! | 上传/下载 | [`controllers::upload`] | `Controllers/UploadController.cs` |
 //! | UEditor 后端 | [`ueditor::UeditorService`] | `UEditor/*.cs`（Handler/Upload/Crawler/ListFile/PathFormatter） |
 //! | 多段表单解析 | [`multipart::FormData`] | `Request.ReadFormAsync()` |
@@ -28,11 +29,12 @@
 //!     let ui = DsMallUi::builder()
 //!         .web_root("wwwroot")
 //!         .views_root("Views")
+//!         .admin_area("Biz")            // 后台区域名：默认 Admin，本项目用 Biz
 //!         .build()?;
 //!     ui.materialize_defaults()?;      // 首次：落地默认视图 + ueconfig.json
 //!
 //!     let mut router = Router::new();
-//!     ui.mount(&mut router);           // /fileuploader、/Upload/*、/admin/*
+//!     ui.mount(&mut router);           // /fileuploader、/Upload/*、/biz/home|config|login/*
 //!
 //!     // 静态资源（wwwroot）挂 fallback；DSMallUI 的路由优先命中
 //!     let statics = ui.static_files();
@@ -68,6 +70,7 @@
 //!   [`multipart`]，并在模块文档里写明「若出现第二个消费方就下沉进 `dhrust::net`」；
 //! - 控制器/视图/静态资源/日志/口令/出网客户端一律用 `dhrust` 既有能力，未另起炉灶。
 
+pub mod area;
 pub mod backend;
 pub mod controllers;
 pub mod models;
@@ -76,8 +79,9 @@ pub mod options;
 pub mod ueditor;
 pub mod views;
 
+pub use area::{AreaError, DEFAULT_AREA};
 pub use backend::{default_settings, AdminBackend, AdminUser, MemoryBackend};
-pub use controllers::admin::AdminArea;
+pub use controllers::admin::{home_route, AdminArea};
 pub use controllers::upload::UploadController;
 pub use models::Hierarchy;
 pub use multipart::{FormData, MultipartError, Part};

@@ -8,7 +8,7 @@
 
 param(
     [switch]$SkipSmoke,
-    [int]$MinTests = 68
+    [int]$MinTests = 84
 )
 
 $ErrorActionPreference = 'Stop'
@@ -126,6 +126,8 @@ else {
         try {
             $process = Start-Process -FilePath $exe -ArgumentList $port -WorkingDirectory $root -PassThru -RedirectStandardOutput $outFile -RedirectStandardError ($outFile + '.err')
             $base = "http://127.0.0.1:$port"
+            # 示例默认区域为 Biz（可用第二个参数改成 Admin）；冒烟按安装值验证
+            $areaSegment = 'biz'
 
             $ready = $false
             for ($i = 0; $i -lt 40; $i++) {
@@ -141,13 +143,36 @@ else {
                 Add-Failure '冒烟：服务 10 秒内未就绪'
             }
             else {
-                # ① 设置页
-                $page = Invoke-WebRequest -Uri "$base/admin/config/index" -UseBasicParsing -TimeoutSec 5
-                if ($page.StatusCode -eq 200 -and $page.Content.Contains('<form')) {
-                    Add-Pass ('冒烟 /admin/config/index（{0} 字节）' -f $page.Content.Length)
+                # ① 后台首页 + 设置页（区域名由示例默认值 Biz 决定）
+                $homePage = Invoke-WebRequest -Uri "$base/$areaSegment/home/index" -UseBasicParsing -TimeoutSec 5
+                if ($homePage.StatusCode -eq 200) {
+                    Add-Pass ('冒烟 /{0}/home/index（{1} 字节）' -f $areaSegment, $homePage.Content.Length)
                 }
                 else {
-                    Add-Failure ('冒烟 /admin/config/index 异常：HTTP {0}' -f $page.StatusCode)
+                    Add-Failure ('冒烟 /{0}/home/index 异常：HTTP {1}' -f $areaSegment, $homePage.StatusCode)
+                }
+
+                # 旧默认区域不应再挂载（区域可配置的隔离性）
+                $legacy = $null
+                try {
+                    $legacy = Invoke-WebRequest -Uri "$base/admin/home/index" -UseBasicParsing -TimeoutSec 5
+                }
+                catch {
+                    $legacy = $_.Exception.Response
+                }
+                if ($null -ne $legacy -and [int]$legacy.StatusCode -eq 404) {
+                    Add-Pass '冒烟 /admin/home/index 已隔离（404）'
+                }
+                else {
+                    Add-Failure '冒烟 /admin/home/index 不应可访问'
+                }
+
+                $page = Invoke-WebRequest -Uri "$base/$areaSegment/config/index" -UseBasicParsing -TimeoutSec 5
+                if ($page.StatusCode -eq 200 -and $page.Content.Contains('<form')) {
+                    Add-Pass ('冒烟 /{0}/config/index（{1} 字节）' -f $areaSegment, $page.Content.Length)
+                }
+                else {
+                    Add-Failure ('冒烟 /{0}/config/index 异常：HTTP {1}' -f $areaSegment, $page.StatusCode)
                 }
 
                 # ② UEditor 配置
@@ -160,7 +185,7 @@ else {
                 }
 
                 # ③ 登录（错误口令应 200 并提示；正确口令应 302）
-                $bad = Invoke-WebRequest -Uri "$base/admin/login/login" -Method Post -Body @{ UserName = 'admin'; Password = 'wrong' } -UseBasicParsing -TimeoutSec 5
+                $bad = Invoke-WebRequest -Uri "$base/$areaSegment/login/login" -Method Post -Body @{ UserName = 'admin'; Password = 'wrong' } -UseBasicParsing -TimeoutSec 5
                 if ($bad.StatusCode -eq 200) {
                     Add-Pass '冒烟 登录失败路径'
                 }

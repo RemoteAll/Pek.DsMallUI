@@ -1,7 +1,7 @@
 # Pek.DsMallUI（Rust）
 
 「猿人易 / NCube / DsMallUI」后台 UI 能力的 **Rust 统一封装**：UEditor 富文本后端、上传下载、
-后台 Area（站点设置 / 登录）、Razor 子集视图与静态资源，全部复用
+后台 Area（首页 / 站点设置 / 登录，**区域名可配置**）、Razor 子集视图与静态资源，全部复用
 [DH.RustBase](../../DH.RustBase)（crate `dhrust`）的 **C# 风格 Web 规范**。
 
 - 参考工程（C#）：`G:\Code\Pek.FrameWork\Pek.DsMallUI`
@@ -32,13 +32,14 @@ async fn main() -> Result<(), String> {
         .web_root("wwwroot")          // 静态资源根（/static/** 等）
         .views_root("Views")          // Razor 视图根
         .upload_path("upload")        // 上传目录（相对 web_root），URL 前缀 /upload
+        .admin_area("Biz")            // 后台区域名（默认 Admin；路由变 /biz/...）
         .backend(Arc::new(MemoryBackend::new()))  // 生产请换成自己的 AdminBackend
         .build()?;
 
     ui.materialize_defaults()?;       // 首次部署：落地默认视图 + ueconfig.json（只补缺失）
 
     let mut router = Router::new();
-    ui.mount(&mut router);            // /fileuploader、/Upload/*、/admin/*
+    ui.mount(&mut router);            // /fileuploader、/Upload/*、/biz/home|config|login/*
 
     let statics = ui.static_files();  // wwwroot + ETag/304
     router.fallback(route(move |ctx| {
@@ -56,19 +57,21 @@ async fn main() -> Result<(), String> {
 }
 ```
 
-本地跑起来看效果：
+本地跑起来看效果（示例默认区域为 `Biz`，可改成 `Admin`）：
 
 ```powershell
-cargo run --example admin_server            # 默认 127.0.0.1:8080
-cargo run --example admin_server -- 8099    # 指定端口
+cargo run --example admin_server                 # 默认 127.0.0.1:8080，区域 Biz
+cargo run --example admin_server -- 8099         # 指定端口
+cargo run --example admin_server -- 8099 Admin   # 指定端口 + 区域名
 ```
 
-| 入口 | 说明 |
+| 入口（`{area}` 由配置决定，默认 `admin`） | 说明 |
 |---|---|
-| `GET /admin/config/index` | 站点设置页（Razor 子集渲染，套 `Views/Shared/_Layout.cshtml`） |
-| `POST /admin/config/updatebase` | 保存设置（字段名与 C# `ConfigController.UpdateBase` 一致） |
-| `GET /admin/login/index` | 登录页 |
-| `POST /admin/login/login` | 登录（示例账号 `admin` / `admin123`） |
+| `GET /{area}/home/index` | 后台首页（控制台 + 快捷入口） |
+| `GET /{area}/config/index` | 站点设置页（Razor 子集渲染，套 `Views/Shared/_Layout.cshtml`） |
+| `POST /{area}/config/updatebase` | 保存设置（字段名与 C# `ConfigController.UpdateBase` 一致） |
+| `GET /{area}/login/index` | 登录页 |
+| `POST /{area}/login/login` | 登录（示例账号 `admin` / `admin123`） |
 | `GET /fileuploader?action=config` | UEditor 配置（原样回吐 `ueconfig.json`） |
 | `POST /fileuploader?action=uploadimage` | 图片上传（multipart，字段 `upfile`） |
 | `POST /fileuploader?action=uploadscrawl` | 涂鸦（base64 data URL） |
@@ -77,18 +80,33 @@ cargo run --example admin_server -- 8099    # 指定端口
 | `GET /fileuploader?action=listimage` | 图片管理器分页列表 |
 | `GET /Upload/downloads/{path}` | 下载上传目录内文件（带 `Content-Disposition`、ETag/304） |
 
+## 区域（Area）
+
+后台路由与视图都按 **ASP.NET Core Areas** 约定组织（对标 C# `DHSetting.Current.AdminArea`）：
+
+- **默认区域 `Admin`**，消费方可按自己的配置改名（如 `Biz`）：
+  `DsMallUi::builder().admin_area("Biz")` → 路由 `/biz/...`、视图 `Views/Biz/...`；
+- **视图回退**：`Views/{Area}/...` 不存在时自动用 `Views/Admin/...`（由
+  `dhrust::net::controller::ViewRenderer::with_fallback_area` 提供），因此改区域名**不必复制默认视图**；
+  要定制时再在 `Views/Biz/Config/Index.cshtml` 放同名文件覆盖（对齐 NCube「子项目视图重写」）；
+- **命名约束**：字母开头，仅字母/数字/`_`/`-`（`a/b`、`1admin` 在 `build()` 直接报错）；
+  存储/视图目录 Pascal 化，URL 段小写；
+- 区域名在**装配时**决定（读自己的配置后传给 builder），与 C# 启动时读 `AdminArea` 同口径。
+
 ## 目录结构
 
 ```
 Pek.DsMallUI/
 ├─ assets/ueconfig.json          # UEditor 配置（与 C# 工程同一份，含块注释）
-├─ Views/                        # Razor 子集默认视图（可被项目覆盖）
+├─ Views/                        # Razor 子集默认视图（规范位置在 Admin，可被项目覆盖）
 │  ├─ Shared/_Layout.cshtml
 │  ├─ Shared/Prompt.cshtml
+│  ├─ Admin/Home/Index.cshtml
 │  ├─ Admin/Config/Index.cshtml
 │  └─ Admin/Login/Index.cshtml
 ├─ src/
 │  ├─ lib.rs                     # crate 文档 + 门面导出 + 实体解码（测试用）
+│  ├─ area.rs                    # 区域命名与路由/视图约定（默认 Admin）
 │  ├─ options.rs                 # DsMallUi / DsMallUiBuilder（对应 PekStartup）
 │  ├─ backend.rs                 # AdminBackend 抽象 + MemoryBackend（示例）
 │  ├─ multipart.rs               # multipart/form-data 解析（dhrust 待办项的落地）
@@ -125,6 +143,9 @@ C# 参考工程的 `wwwroot/static` 是 **825 个文件 / 24.6 MB 的第三方�
 3. `{rand:n}` 生成 **n 位**数字（C# 的 `rand.Next(10^n, 10^(n+1))` 实际是 n+1 位）。
 4. 文件名清洗用 `dhrust::io::sanitize_file_name`（非法字符→`_`、`..`→`__`），并额外做落盘路径越界校验。
 5. 后台持久化通过 `AdminBackend` 抽象注入，不绑定任何 ORM；C# 版直接写 XCode 实体。
+6. 区域名可配置（默认 `Admin`）：C# 由 `DHSetting.Current.AdminArea` 决定，Rust 由
+   `DsMallUiBuilder::admin_area()` 决定；区域视图回退已下沉到 `dhrust`
+   （`ViewRenderer::with_fallback_area`，2026-11-10 补齐），本 crate 不再手写解析。
 
 ## 依赖与约束
 

@@ -21,6 +21,7 @@
 | 路由与上下文 | `dhrust::net::router` | `{name}` 单段占位；无 `{**path}` |
 | 控制器/参数绑定/JSON 信封 | `dhrust::net::controller` | 对齐 C# `MapController<T>` 与 `arg()` 绑定顺序 |
 | 视图引擎 | `dhrust::razor` + `net::controller::ViewRenderer`（feature `razor`） | **Razor 子集**，双端可渲染 |
+| Area 视图约定 | `dhrust::net::controller::ViewRenderer::with_fallback_area`（2026-11-10 补齐） | 逐段 Pascal + 默认区域回退 |
 | 静态文件（ETag/304/穿越防护） | `dhrust::net::static_files` | 上传目录下载复用它 |
 | 口令散列 | `dhrust::sign::password` | 与 C# `SaltPasswordProvider` 字节级互通 |
 | 日志 | `dhrust::logs` | 失败必须含「做什么/为什么/上下文」 |
@@ -36,8 +37,10 @@
 
 ## 硬约束
 
-- **不改 `DH.RustBase`**：需要动公共库时先问（跨仓库改动要连带回归其它消费方）。
-  当前 Area 视图约定是在本 crate `src/views.rs` 里拼 `Admin/Config` 实现的，没有改 `ViewRenderer`。
+- **`DH.RustBase` 按需下沉、不各写一套**：通用 Web 约定（控制器/路由/视图/静态资源）一律先查公共库；
+  确实要动公共库时**先问**，并连带回归其它消费方（至少 `Pek.RCard`、`Pek.RPanlServer` `cargo check`）。
+  2026-11-10 已按用户要求把 Area 能力下沉到 `dhrust`（`ViewRenderer::with_fallback_area`，
+  DH 提交 `3932333`）；本 crate 的 `views.rs` 只保留内置视图落地与模板默认键，不再自己解析区域。
 - **Razor 子集红线**：视图里不得使用 `@using`/`@inject`/`@helper`/自由方法调用；
   **不得写 `Layout = null`**（引擎要求字符串，不声明 Layout 即独立页面）；
   **模型缺键即渲染失败**（`Views::render*` 会先补内置模板默认键，新增视图字段要同步补默认值）。

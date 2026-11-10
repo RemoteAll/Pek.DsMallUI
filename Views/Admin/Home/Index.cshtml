@@ -1,0 +1,51 @@
+@{
+    Layout = "Shared/_Layout";
+}
+<div class="admin-dashboard">
+    <div class="admin-hero">
+        <h1>@Model.displayName</h1>
+        <p class="admin-sub">
+            当前区域：<code>@Model.areaName</code>
+            （路由前缀 <code>@Model.areaRoute</code>，可随配置改名）
+        </p>
+    </div>
+
+    <div class="admin-metrics">
+        <div class="admin-metric">
+            <span class="admin-metric-label">站点名称</span>
+            <span class="admin-metric-value">@Model.siteName</span>
+        </div>
+        <div class="admin-metric">
+            <span class="admin-metric-label">上传目录</span>
+            <span class="admin-metric-value">@Model.uploadPrefix</span>
+        </div>
+        <div class="admin-metric">
+            <span class="admin-metric-label">当前用户</span>
+            <span class="admin-metric-value">@Model.userName</span>
+        </div>
+        <div class="admin-metric">
+            <span class="admin-metric-label">版本</span>
+            <span class="admin-metric-value">@Model.version</span>
+        </div>
+    </div>
+
+    <h2 class="admin-section-title">快捷入口</h2>
+    @if (Model.hasMenus) {
+    <div class="admin-cards">
+        @foreach (var menu in Model.menus) {
+        <a class="admin-card" href="@menu.url">
+            <span class="admin-card-name">@menu.name</span>
+            <span class="admin-card-desc">@menu.desc</span>
+        </a>
+        }
+    </div>
+    } else {
+    <p class="admin-tip">当前没有可用的后台页面。</p>
+    }
+</div>
+
+@section Scripts {
+<script type="text/javascript">
+    // 首页只做展示，不轮询、不占用资源
+</script>
+}

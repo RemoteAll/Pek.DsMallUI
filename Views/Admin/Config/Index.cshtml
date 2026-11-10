@@ -4,14 +4,17 @@
 <div class="admin-panel">
     <div class="admin-panel-head">
         <h2>站点设置</h2>
-        <p class="admin-tip">对应 C# 参考工程 <code>Areas/Admin/Controllers/ConfigController</code></p>
+        <p class="admin-tip">
+            区域 <code>@Model.areaName</code> · 对应 C# 参考工程
+            <code>Areas/Admin/Controllers/ConfigController</code>
+        </p>
     </div>
 
     @if (Model.saved) {
     <div class="admin-alert admin-alert-ok">保存成功</div>
     }
 
-    <form method="post" action="/admin/config/updatebase" class="admin-form">
+    <form method="post" action="@Model.areaRoute/config/updatebase" class="admin-form">
         <div class="admin-form-row">
             <label for="SiteName">网站名称</label>
             <input type="text" id="SiteName" name="SiteName" value="@Model.siteName" required>
