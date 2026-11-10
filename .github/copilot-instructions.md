@@ -46,8 +46,12 @@
   **模型缺键即渲染失败**（`Views::render*` 会先补内置模板默认键，新增视图字段要同步补默认值）。
 - **非 ASCII 实体**：Razor 子集等价 `HtmlEncoder.Default`，中文输出为 `&#x..;`；
   测试断言中文先用 `crate::decode_html_entities` 还原。
-- **静态资源不入库**：`wwwroot/static`（824 文件 / 24.6 MB 第三方前端资产）由
-  `tools/sync-wwwroot.ps1` 从 C# 工程同步；`wwwroot/ueconfig.json` 由 `materialize_defaults()` 物化。
+- **静态资源不入库、默认不入二进制、路径可配**：`wwwroot/static`（824 文件 / 24.6 MB
+  第三方前端资产）由 `tools/sync-wwwroot.ps1` 从 C# 工程同步；`wwwroot/ueconfig.json` 由
+  `materialize_defaults()` 物化。资源根由 `DsMallUiBuilder::web_root`（默认 `wwwroot`）
+  由业务系统配置；`static_files()` 走 `dhrust` 的 `StaticFiles::with_embedded`（空表 = 纯磁盘），
+  单文件部署才用 `embedded_statics`（build.rs 资源表）。
+  回归用例 `wwwroot_is_never_compiled_into_binary` 扫描 `src/**` 的 `include_*` 引用做守卫。
 - **上传安全**：扩展名白名单 + 体积上限 + 路径必须落在上传根内（三重校验），
   抓图只允许 `http`/`https`（防 SSRF）。
 - **口令只走 `dhrust::sign::password`**；不要自写散列、不要把明文落盘。

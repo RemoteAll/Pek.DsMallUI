@@ -121,6 +121,15 @@ Pek.DsMallUI/
 
 ## 静态资源（wwwroot）
 
+**约定：资源目录默认不编译进二进制，且路径由业务系统决定。** 它是运行期资源目录
+（运营可改、可单独替换）：
+
+- `DsMallUi::builder().web_root("wwwroot")` —— **业务系统按自己的配置传入任意路径**
+  （相对或绝对，如 `data/wwwroot`），默认 `wwwroot`；
+- `DsMallUi::static_files()` → `dhrust::net::static_files::StaticFiles::with_embedded(root, &[])`
+  （空表 = 纯磁盘；约定与实现都在 `DH.RustBase`，本 crate 只做薄封装）；
+- `Cargo.toml` 的 `exclude` 把 `wwwroot/` 排除在发布包之外。
+
 C# 参考工程的 `wwwroot/static` 是 **825 个文件 / 24.6 MB 的第三方前端资产**
 （UEditor、layer、layui、jQuery UI、swiper 等），不适合复制进 Rust 仓库。做法：
 
@@ -129,7 +138,16 @@ C# 参考工程的 `wwwroot/static` 是 **825 个文件 / 24.6 MB 的第三方�
 .\tools\sync-wwwroot.ps1
 ```
 
-`StaticFiles` 支持「磁盘目录 + 编译期嵌入」叠加，默认用磁盘目录（改文件即生效）。
+确实需要「单文件部署 / 无 wwwroot 目录」时，才**显式**嵌入（资源表由消费方 `build.rs`
+扫描前端 `dist` 生成；嵌入优先于磁盘同名文件）：
+
+```rust,ignore
+include!(concat!(env!("OUT_DIR"), "/spa_files.rs")); // pub static SPA_FILES: &[(&str, &[u8])]
+let ui = DsMallUi::builder().web_root("wwwroot").embedded_statics(SPA_FILES).build()?;
+```
+
+回归里有守卫用例 `wwwroot_is_never_compiled_into_binary`：扫描 `src/**`，
+任何 `include_bytes!/include_str!` 引用 `wwwroot` 直接失败。
 
 ## 与 C# 参考实现的差异
 

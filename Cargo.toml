@@ -8,6 +8,9 @@ license = "MIT"
 repository = "https://github.com/PeiKeSmart/Pek.Framework"
 keywords = ["dsmall", "ncube", "admin-ui", "ueditor", "mvc"]
 categories = ["web-programming"]
+# wwwroot 是运行期资源目录（第三方前端资产约 24.6 MB），默认不入二进制、也不进发布包；
+# 需要单文件部署时由消费方显式 `embedded_statics`（build.rs 生成的资源表）。
+exclude = ["/wwwroot", "/artifacts"]
 
 [dependencies]
 # DH 基础库：HTTP 服务/路由/控制器（C# 风格）+ Razor 子集视图引擎 + 静态资源 + 出网客户端

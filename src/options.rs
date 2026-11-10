@@ -38,7 +38,6 @@ use crate::controllers::admin::AdminArea;
 use crate::controllers::upload::UploadController;
 use crate::ueditor::{UeditorConfig, UeditorService};
 use crate::views::Views;
-
 /// 默认上传目录名（C# `UploadPath` 默认值同为 `upload`）。
 pub const DEFAULT_UPLOAD_PATH: &str = "upload";
 /// 默认后台区域名（与 C# `AdminArea.AreaName` 默认值一致：`Admin`）。
@@ -55,6 +54,8 @@ pub struct DsMallUi {
     views: Views,
     upload: UploadController,
     admin: AdminArea,
+    /// 显式嵌入的静态资源（默认空：`wwwroot` 不编译进二进制）
+    embedded_statics: Vec<(&'static str, &'static [u8])>,
 }
 
 impl DsMallUi {
@@ -104,9 +105,15 @@ impl DsMallUi {
         self.admin.mount(router);
     }
 
-    /// 静态资源服务（`wwwroot` 目录；由调用方挂到 `Router::fallback`）。
+    /// 静态资源服务（根目录由业务系统配置，默认 `wwwroot`；由调用方挂到 `Router::fallback`）。
+    ///
+    /// **约定：资源目录默认不编译进二进制**（第三方前端资产约 24.6 MB，且属运营期可变的
+    /// 资源，不应随程序版本固化）；根目录由 [`DsMallUiBuilder::web_root`] 指定，
+    /// 业务系统可用自己的配置/命令行传入任意路径。
+    /// 只有显式调用 [`DsMallUiBuilder::embedded_statics`] 时才把指定资源嵌入（嵌入优先）。
     pub fn static_files(&self) -> StaticFiles {
-        StaticFiles::new(self.web_root.clone())
+        // 磁盘优先、默认不嵌入；`with_embedded` 传空表等价于纯磁盘（约定在 dhrust 内）。
+        StaticFiles::with_embedded(self.web_root.clone(), &self.embedded_statics)
     }
 
     /// 首次部署：把内置视图与 `ueconfig.json` 落到磁盘（**只补缺失，不覆盖**）。
@@ -139,6 +146,7 @@ pub struct DsMallUiBuilder {
     admin_area: String,
     ueditor_config: Option<PathBuf>,
     max_upload_bytes: u64,
+    embedded_statics: Vec<(&'static str, &'static [u8])>,
 }
 
 impl Default for DsMallUiBuilder {
@@ -151,12 +159,13 @@ impl Default for DsMallUiBuilder {
             admin_area: DEFAULT_ADMIN_AREA.to_string(),
             ueditor_config: None,
             max_upload_bytes: DEFAULT_MAX_UPLOAD_BYTES,
+            embedded_statics: Vec::new(),
         }
     }
 }
 
 impl DsMallUiBuilder {
-    /// 站点物理根（默认 `wwwroot`）。
+    /// 站点物理根（默认 `wwwroot`；**业务系统按自己的配置改成任意路径**）。
     pub fn web_root(mut self, root: impl Into<PathBuf>) -> Self {
         self.web_root = root.into();
         self
@@ -201,6 +210,22 @@ impl DsMallUiBuilder {
         self
     }
 
+    /// 可选：把静态资源**显式嵌入**二进制（默认不嵌入，`wwwroot` 走磁盘）。
+    ///
+    /// 仅用于「单文件部署 / 无 `wwwroot` 目录」的场景；资源表通常由消费方 `build.rs`
+    /// 扫描前端 `dist` 生成：
+    ///
+    /// ```ignore
+    /// include!(concat!(env!("OUT_DIR"), "/spa_files.rs")); // pub static SPA_FILES: &[(&str, &[u8])]
+    /// let ui = DsMallUi::builder().embedded_statics(SPA_FILES).build()?;
+    /// ```
+    ///
+    /// 嵌入资源**优先于**磁盘同名文件（见 `dhrust::net::static_files::StaticFiles`）。
+    pub fn embedded_statics(mut self, files: &'static [(&'static str, &'static [u8])]) -> Self {
+        self.embedded_statics = files.to_vec();
+        self
+    }
+
     /// 组装。
     pub fn build(self) -> Result<DsMallUi, String> {
         let upload_path = self.upload_path.trim().trim_matches('/');
@@ -231,6 +256,7 @@ impl DsMallUiBuilder {
             views,
             upload,
             admin,
+            embedded_statics: self.embedded_statics,
         })
     }
 }
@@ -313,5 +339,104 @@ mod tests {
         let second = ui.materialize_defaults().unwrap();
         assert_eq!(second, 0, "二次落地必须全部跳过");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn statics_are_disk_based_by_default() {
+        let root = std::env::temp_dir().join(format!(
+            "dsmallui-statics-disk-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("app.js"), b"disk-content").unwrap();
+
+        let ui = DsMallUi::builder().web_root(&root).build().unwrap();
+        let response = ui
+            .static_files()
+            .try_serve_file("/app.js")
+            .expect("磁盘 wwwroot 文件应命中");
+        assert_eq!(response.body.as_ref(), b"disk-content");
+
+        // 默认不嵌入：磁盘删掉后就命中不了（若曾编译进二进制则仍会命中）
+        std::fs::remove_file(root.join("app.js")).unwrap();
+        assert!(ui.static_files().try_serve_file("/app.js").is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn embedded_statics_are_opt_in_and_override_disk() {
+        static EMBEDDED: &[(&str, &[u8])] = &[("app.js", b"embedded-content")];
+
+        let root = std::env::temp_dir().join(format!(
+            "dsmallui-statics-embed-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("app.js"), b"disk-content").unwrap();
+
+        // 未显式嵌入 → 磁盘内容
+        let ui = DsMallUi::builder().web_root(&root).build().unwrap();
+        let response = ui.static_files().try_serve_file("/app.js").unwrap();
+        assert_eq!(response.body.as_ref(), b"disk-content");
+
+        // 显式嵌入 → 嵌入优先
+        let ui = DsMallUi::builder()
+            .web_root(&root)
+            .embedded_statics(EMBEDDED)
+            .build()
+            .unwrap();
+        let response = ui.static_files().try_serve_file("/app.js").unwrap();
+        assert_eq!(response.body.as_ref(), b"embedded-content");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 约定守卫：`wwwroot` 是运行期资源目录，**默认不得编译进二进制**。
+    ///
+    /// 任何 `include_bytes!/include_str!` 行只要引用 `wwwroot` 就判失败——
+    /// 需要单文件部署时走 `DsMallUiBuilder::embedded_statics` 的显式嵌入。
+    #[test]
+    fn wwwroot_is_never_compiled_into_binary() {
+        fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect(&path, out);
+                } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                    out.push(path);
+                }
+            }
+        }
+
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        collect(&src, &mut files);
+        assert!(!files.is_empty(), "未找到源码文件：{}", src.display());
+
+        for file in files {
+            let text = std::fs::read_to_string(&file).unwrap();
+            for (index, line) in text.lines().enumerate() {
+                // 只看**真实宏调用**（带括号），并剥掉行注释——文档里提到宏名不算
+                let code = line.split("//").next().unwrap_or("");
+                let invokes_include =
+                    code.contains("include_bytes!(") || code.contains("include_str!(");
+                if !invokes_include {
+                    continue;
+                }
+                assert!(
+                    !code.contains("wwwroot"),
+                    "资源目录不得编译进二进制：{}:{} → {}",
+                    file.display(),
+                    index + 1,
+                    code.trim()
+                );
+            }
+        }
     }
 }
