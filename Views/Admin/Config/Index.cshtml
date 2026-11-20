@@ -1,104 +1,378 @@
 @{
     Layout = "Shared/_Layout";
 }
-<div class="admin-panel">
-    <div class="admin-panel-head">
-        <h2>站点设置</h2>
-        <p class="admin-tip">
-            区域 <code>@Model.areaName</code> · 对应 C# 参考工程
-            <code>Areas/Admin/Controllers/ConfigController</code>
-        </p>
-    </div>
-
-    @if (Model.saved) {
-    <div class="admin-alert admin-alert-ok">保存成功</div>
+<style>
+    .layui-tab-title {
+        width: 95%;
+        margin: 0 auto;
     }
 
-    <form method="post" action="@Model.areaRoute/config/updatebase" class="admin-form">
-        <div class="admin-form-row">
-            <label for="SiteName">网站名称</label>
-            <input type="text" id="SiteName" name="SiteName" value="@Model.siteName" required>
+    .layui-tab.layui-tab-brief.Lan {
+        box-shadow: 0 0 5px #AAA inset;
+        box-shadow: 0 0 5px #AAA;
+    }
+</style>
+<div class="page">
+    <div class="fixed-bar">
+        <div class="item-title">
+            <div class="subject">
+                <h3>站点设置</h3>
+                <h5></h5>
+            </div>
+            <ul class="tab-base ds-row">
+                <li><a href="@(Model.areaRoute)/config/index" class="current"><span>站点设置</span></a></li>
+                <li><a href="@(Model.areaRoute)/config/verified"><span>实名认证配置</span></a></li>
+                <li><a href="@(Model.areaRoute)/config/auto"><span>自动执行时间设置</span></a></li>
+            </ul>
         </div>
-        <div class="admin-form-row">
-            <label for="DisplayName">系统名称</label>
-            <input type="text" id="DisplayName" name="DisplayName" value="@Model.displayName">
-        </div>
-        <div class="admin-form-row">
-            <label for="SeoTitle">SEO 标题</label>
-            <input type="text" id="SeoTitle" name="SeoTitle" value="@Model.seoTitle">
-        </div>
-        <div class="admin-form-row">
-            <label for="SeoKey">SEO 关键字</label>
-            <input type="text" id="SeoKey" name="SeoKey" value="@Model.seoKey">
-        </div>
-        <div class="admin-form-row">
-            <label for="SeoDescribe">SEO 描述</label>
-            <textarea id="SeoDescribe" name="SeoDescribe" rows="3">@Model.seoDescribe</textarea>
-        </div>
-        <div class="admin-form-row">
-            <label for="Registration">备案信息</label>
-            <input type="text" id="Registration" name="Registration" value="@Model.registration">
-        </div>
-        <div class="admin-form-row">
-            <label for="Copyright">版权信息</label>
-            <input type="text" id="Copyright" name="Copyright" value="@Model.copyright">
-        </div>
-        <div class="admin-form-row">
-            <label for="CustomerTel">客服电话</label>
-            <input type="text" id="CustomerTel" name="CustomerTel" value="@Model.customerTel">
-        </div>
-        <div class="admin-form-row">
-            <label for="CustomerEmail">客服邮箱</label>
-            <input type="text" id="CustomerEmail" name="CustomerEmail" value="@Model.customerEmail">
-        </div>
-        <div class="admin-form-row">
-            <label for="UrlSuffix">URL 后缀</label>
-            <input type="text" id="UrlSuffix" name="UrlSuffix" value="@Model.urlSuffix">
-        </div>
-        <div class="admin-form-row">
-            <label for="Statistical">统计代码</label>
-            <textarea id="Statistical" name="Statistical" rows="3">@Model.statistical</textarea>
-        </div>
-        <div class="admin-form-row">
-            <label for="PageFoot">页脚</label>
-            <textarea id="PageFoot" name="PageFoot" rows="3">@Model.pageFoot</textarea>
-        </div>
-        <div class="admin-form-row">
-            <label for="HeaderCustomHtml">头部自定义 HTML</label>
-            <textarea id="HeaderCustomHtml" name="HeaderCustomHtml" rows="3">@Model.headerCustomHtml</textarea>
-        </div>
-        <div class="admin-form-row">
-            <label for="FooterCustomHtml">底部自定义 HTML</label>
-            <textarea id="FooterCustomHtml" name="FooterCustomHtml" rows="3">@Model.footerCustomHtml</textarea>
-        </div>
-        <div class="admin-form-row">
-            <label for="curDomainUrl">当前域名</label>
-            <input type="text" id="curDomainUrl" name="curDomainUrl" value="@Model.curDomainUrl" placeholder="https://example.com">
-        </div>
-        @if (Model.hasLanguages) {
-        <div class="admin-form-row">
-            <label>多语言</label>
-            <div class="admin-checkbox-list">
+    </div>
+    <form method="post" action="@(Model.areaRoute)/config/updatebase" name="form1">
+        <div class="layui-tab layui-tab-brief Lan" lay-filter="docDemoTabBrief">
+            @if (Model.hasLanguages) {
+            <ul class="layui-tab-title">
+                <li class="layui-this">标准:</li>
                 @foreach (var lang in Model.languages) {
-                <label class="admin-checkbox"><input type="checkbox" name="LanguageIds" value="@lang.id" checked> @lang.name</label>
+                <li>@lang.name</li>
+                }
+            </ul>
+            }
+            <div class="layui-tab-content">
+                <div class="layui-tab-item layui-show">
+                    <div class="ncap-form-default">
+                        <dl>
+                            <dt>网站名称</dt>
+                            <dd>
+                                <input id="SiteName" name="SiteName" value="@Model.siteName" class="input-txt" type="text">
+                                <span class="err"></span>
+                            </dd>
+                        </dl>
+                        <dl>
+                            <dt>网站Seo标题</dt>
+                            <dd>
+                                <input id="SeoTitle" name="SeoTitle" value="@Model.seoTitle" class="input-txt" type="text">
+                                <span class="err"></span>
+                            </dd>
+                        </dl>
+                        <dl>
+                            <dt>网站Seo关键字</dt>
+                            <dd>
+                                <input id="SeoKey" name="SeoKey" value="@Model.seoKey" class="input-txt" type="text">
+                                <span class="err"></span>
+                            </dd>
+                        </dl>
+                        <dl>
+                            <dt>网站Seo描述</dt>
+                            <dd>
+                                <input id="SeoDescribe" name="SeoDescribe" value="@Model.seoDescribe" class="input-txt" type="text">
+                                <span class="err"></span>
+                            </dd>
+                        </dl>
+                        <dl>
+                            <dt>ICP备案号</dt>
+                            <dd>
+                                <input id="registration" name="registration" value="@Model.registration" class="input-txt" type="text">
+                                <span class="err"></span>
+                            </dd>
+                        </dl>
+                        <dl>
+                            <dt>版权</dt>
+                            <dd>
+                                <input id="copyright" name="copyright" value="@Model.copyright" class="input-txt" type="text">
+                                <span class="err"></span>
+                            </dd>
+                        </dl>
+                    </div>
+                </div>
+
+                @foreach (var lang in Model.languages) {
+                <div class="layui-tab-item">
+                    <div class="ncap-form-default">
+                        <dl>
+                            <dt>网站名称</dt>
+                            <dd>
+                                <input name="[@lang.id].SiteName" value="@lang.siteName" class="input-txt" type="text">
+                                <span class="err"></span>
+                            </dd>
+                        </dl>
+                        <dl>
+                            <dt>网站Seo标题</dt>
+                            <dd>
+                                <input name="[@lang.id].SeoTitle" value="@lang.seoTitle" class="input-txt" type="text">
+                                <span class="err"></span>
+                            </dd>
+                        </dl>
+                        <dl>
+                            <dt>网站Seo关键字</dt>
+                            <dd>
+                                <input name="[@lang.id].SeoKey" value="@lang.seoKey" class="input-txt" type="text">
+                                <span class="err"></span>
+                            </dd>
+                        </dl>
+                        <dl>
+                            <dt>网站Seo描述</dt>
+                            <dd>
+                                <input name="[@lang.id].SeoDescribe" value="@lang.seoDescribe" class="input-txt" type="text">
+                                <span class="err"></span>
+                            </dd>
+                        </dl>
+                        <dl>
+                            <dt>ICP备案号</dt>
+                            <dd>
+                                <input name="[@lang.id].Registration" value="@lang.registration" class="input-txt" type="text">
+                                <span class="err"></span>
+                            </dd>
+                        </dl>
+                        <dl>
+                            <dt>版权</dt>
+                            <dd>
+                                <input name="[@lang.id].SiteCopyright" value="@lang.copyright" class="input-txt" type="text">
+                                <span class="err"></span>
+                            </dd>
+                        </dl>
+                    </div>
+                </div>
                 }
             </div>
         </div>
-        }
-        <div class="admin-form-actions">
-            <button type="submit" class="admin-btn admin-btn-primary">保存设置</button>
+
+        <div class="ncap-form-default">
+            <dl>
+                <dt>系统名称</dt>
+                <dd>
+                    <input id="DisplayName" name="DisplayName" value="@Model.displayName" class="input-txt" type="text">
+                    <span class="err"></span>
+                    <p class="notic">系统名称, 将显示在后台顶部欢迎信息等位置</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>网站域名</dt>
+                <dd>
+                    <input id="CurDomainUrl" name="CurDomainUrl" value="@Model.curDomainUrl" class="input-txt" type="text">
+                    <span class="err"></span>
+                    <p class="notic">网站的域名, 必须http://或者https://开头</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>公司名称</dt>
+                <dd>
+                    <input id="companyname" name="companyname" value="@Model.companyName" class="input-txt" type="text">
+                    <span class="err"></span>
+                    <p class="notic">公司名称, 将会显示在底部等位置</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>客服联系电话</dt>
+                <dd>
+                    <input id="CustomerTel" name="CustomerTel" value="@Model.customerTel" class="input-txt" type="text">
+                    <span class="err"></span>
+                    <p class="notic">客服联系电话,将会显示在头部或者底部等位置</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>前台页头</dt>
+                <dd>
+                    <textarea name="HeaderCustomHtml" id="HeaderCustomHtml">@Model.headerCustomHtml</textarea>
+                    <span class="err"></span>
+                </dd>
+            </dl>
+            <dl>
+                <dt>前台页脚</dt>
+                <dd>
+                    <textarea name="FooterCustomHtml" id="FooterCustomHtml">@Model.footerCustomHtml</textarea>
+                    <span class="err"></span>
+                </dd>
+            </dl>
+            <dl>
+                <dt>流量统计配置</dt>
+                <dd>
+                    <textarea name="Statistical" id="Statistical">@Model.statistical</textarea>
+                    <span class="err"></span>
+                </dd>
+            </dl>
+            <dl>
+                <dt>会话超时</dt>
+                <dd>
+                    <input id="sessiontimeout" name="sessiontimeout" value="@Model.sessionTimeout" class="input-txt" type="text">
+                    <span class="err"></span>
+                    <p class="notic">单点登录后会话超时时间, 该时间内可借助Cookie登录，默认0s</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>刷新用户周期</dt>
+                <dd>
+                    <input id="refreshuserperiod" name="refreshuserperiod" value="@Model.refreshUserPeriod" class="input-txt" type="text">
+                    <span class="err"></span>
+                    <p class="notic">该周期内多次SSO登录只拉取一次用户信息，默认600秒</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>允许密码登录</dt>
+                <dd>
+                    <div class="onoff">
+                        <label for="AllowLogin1" class="cb-enable @(Model.allowLogin ? "selected" : "")">开启</label>
+                        <label for="AllowLogin0" class="cb-disable @(Model.allowLogin ? "" : "selected")">关闭</label>
+                        <input id="AllowLogin1" name="AllowLogin" value="1" type="radio" @(Model.allowLogin ? "checked" : "")>
+                        <input id="AllowLogin0" name="AllowLogin" value="0" type="radio" @(Model.allowLogin ? "" : "checked")>
+                    </div>
+                    <p class="notic">允许密码/手机/扫码登录。允许输入用户名密码/手机号/扫码进行登录</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>允许自动注册</dt>
+                <dd>
+                    <div class="onoff">
+                        <label for="AutoRegister1" class="cb-enable @(Model.autoRegister ? "selected" : "")">开启</label>
+                        <label for="AutoRegister0" class="cb-disable @(Model.autoRegister ? "" : "selected")">关闭</label>
+                        <input id="AutoRegister1" name="AutoRegister" value="1" type="radio" @(Model.autoRegister ? "checked" : "")>
+                        <input id="AutoRegister0" name="AutoRegister" value="0" type="radio" @(Model.autoRegister ? "" : "checked")>
+                    </div>
+                    <p class="notic">SSO登录后，如果本地未登录，自动注册新用户。全局设置和OAuth应用设置只要有一个启用则表示使用</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>使用Sso角色</dt>
+                <dd>
+                    <div class="onoff">
+                        <label for="UseSsoRole1" class="cb-enable @(Model.useSsoRole ? "selected" : "")">开启</label>
+                        <label for="UseSsoRole0" class="cb-disable @(Model.useSsoRole ? "" : "selected")">关闭</label>
+                        <input id="UseSsoRole1" name="UseSsoRole" value="1" type="radio" @(Model.useSsoRole ? "checked" : "")>
+                        <input id="UseSsoRole0" name="UseSsoRole" value="0" type="radio" @(Model.useSsoRole ? "" : "checked")>
+                    </div>
+                    <p class="notic">SSO登录后继续使用SSO角色，默认true；否则使用DefaultRole</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>注销所有系统</dt>
+                <dd>
+                    <div class="onoff">
+                        <label for="LogoutAll1" class="cb-enable @(Model.logoutAll ? "selected" : "")">开启</label>
+                        <label for="LogoutAll0" class="cb-disable @(Model.logoutAll ? "" : "selected")">关闭</label>
+                        <input id="LogoutAll1" name="LogoutAll" value="1" type="radio" @(Model.logoutAll ? "checked" : "")>
+                        <input id="LogoutAll0" name="LogoutAll" value="0" type="radio" @(Model.logoutAll ? "" : "checked")>
+                    </div>
+                    <p class="notic">默认false仅注销本系统，true时注销SsoServer。SsoServer不要开启</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>启用多语言</dt>
+                <dd>
+                    <div class="onoff">
+                        <label for="IsEnableLanguage1" class="cb-enable @(Model.isEnableLanguage ? "selected" : "")">开启</label>
+                        <label for="IsEnableLanguage0" class="cb-disable @(Model.isEnableLanguage ? "" : "selected")">关闭</label>
+                        <input id="IsEnableLanguage1" name="IsEnableLanguage" value="1" type="radio" @(Model.isEnableLanguage ? "checked" : "")>
+                        <input id="IsEnableLanguage0" name="IsEnableLanguage" value="0" type="radio" @(Model.isEnableLanguage ? "" : "checked")>
+                    </div>
+                </dd>
+            </dl>
+            <dl>
+                <dt>启用SEO友好URL</dt>
+                <dd>
+                    <div class="onoff">
+                        <label for="SeoFriendlyUrlsForLanguagesEnabled1" class="cb-enable @(Model.seoFriendlyUrlsForLanguagesEnabled ? "selected" : "")">开启</label>
+                        <label for="SeoFriendlyUrlsForLanguagesEnabled0" class="cb-disable @(Model.seoFriendlyUrlsForLanguagesEnabled ? "" : "selected")">关闭</label>
+                        <input id="SeoFriendlyUrlsForLanguagesEnabled1" name="SeoFriendlyUrlsForLanguagesEnabled" value="1" type="radio" @(Model.seoFriendlyUrlsForLanguagesEnabled ? "checked" : "")>
+                        <input id="SeoFriendlyUrlsForLanguagesEnabled0" name="SeoFriendlyUrlsForLanguagesEnabled" value="0" type="radio" @(Model.seoFriendlyUrlsForLanguagesEnabled ? "" : "checked")>
+                    </div>
+                    <p class="notic">是否启用多语言的SEO友好URL，启用后在地址栏会有语言路径如cn/、en/</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>SEO标题格式</dt>
+                <dd>
+                    <label class="radio-label">
+                        <i class="radio-common @(Model.pageTitleSeoAdjustment == 1 ? "selected" : "")">
+                            <input type="radio" value="1" name="PageTitleSeoAdjustment" @(Model.pageTitleSeoAdjustment == 1 ? "checked" : "")>
+                        </i>
+                        <span>网站名称在后</span>
+                    </label>
+                    <label class="radio-label">
+                        <i class="radio-common @(Model.pageTitleSeoAdjustment == 0 ? "selected" : "")">
+                            <input type="radio" value="0" name="PageTitleSeoAdjustment" @(Model.pageTitleSeoAdjustment == 0 ? "checked" : "")>
+                        </i>
+                        <span>网站名称在前</span>
+                    </label>
+                    <p class="notic">页面标题SEO调整。0为网页标题在网站名称后，1为网页标题在网站名称前</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>启用Url后缀</dt>
+                <dd>
+                    <div class="onoff">
+                        <label for="IsAllowUrlSuffix1" class="cb-enable @(Model.isAllowUrlSuffix ? "selected" : "")">开启</label>
+                        <label for="IsAllowUrlSuffix0" class="cb-disable @(Model.isAllowUrlSuffix ? "" : "selected")">关闭</label>
+                        <input id="IsAllowUrlSuffix1" name="IsAllowUrlSuffix" value="1" type="radio" @(Model.isAllowUrlSuffix ? "checked" : "")>
+                        <input id="IsAllowUrlSuffix0" name="IsAllowUrlSuffix" value="0" type="radio" @(Model.isAllowUrlSuffix ? "" : "checked")>
+                    </div>
+                    <p class="notic">启用Url后缀，则前台设置了路由的URL会有.html等后缀。设置之后需要重启网站才能生效</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>Url后缀</dt>
+                <dd>
+                    <input id="UrlSuffix" name="UrlSuffix" value="@Model.urlSuffix" class="input-txt" type="text">
+                    <span class="err"></span>
+                    <p class="notic">Url后缀，当启用时Url路径中会根据规则带有后缀。为SEO伪静态使用</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>是否生成静态网页</dt>
+                <dd>
+                    <div class="onoff">
+                        <label for="IsHtmlStaticDevelopmentMode1" class="cb-enable @(Model.isHtmlStaticDevelopmentMode ? "" : "selected")">开启</label>
+                        <label for="IsHtmlStaticDevelopmentMode0" class="cb-disable @(Model.isHtmlStaticDevelopmentMode ? "selected" : "")">关闭</label>
+                        <input id="IsHtmlStaticDevelopmentMode1" name="IsHtmlStaticDevelopmentMode" value="1" type="radio" @(Model.isHtmlStaticDevelopmentMode ? "" : "checked")>
+                        <input id="IsHtmlStaticDevelopmentMode0" name="IsHtmlStaticDevelopmentMode" value="0" type="radio" @(Model.isHtmlStaticDevelopmentMode ? "checked" : "")>
+                    </div>
+                    <p class="notic">启用后动态页面转静态页面</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>静态网页过期时间</dt>
+                <dd>
+                    <input id="HtmlStaticExpireMinutes" name="HtmlStaticExpireMinutes" value="@Model.htmlStaticExpireMinutes" class="input-txt" type="text">
+                    <span class="err"></span>
+                    <p class="notic">动态页面转静态页面过期时间</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>签名校验Token</dt>
+                <dd>
+                    <input id="ServerToken" name="ServerToken" value="@Model.serverToken" class="input-txt" type="text">
+                    <span class="err"></span>
+                    <p class="notic">接口请求时检验Token</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>密码强度检验</dt>
+                <dd>
+                    <input id="PaswordStrength" name="PaswordStrength" value="@Model.paswordStrength" class="input-txt" type="text">
+                    <span class="err"></span>
+                    <p class="notic">密码强度正则规则</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>Trace跟踪路径</dt>
+                <dd>
+                    <input id="StarWeb" name="StarWeb" value="@Model.starWeb" class="input-txt" type="text">
+                    <span class="err"></span>
+                    <p class="notic">用于排查问题</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt></dt>
+                <dd><a href="JavaScript:void(0);" class="btn" onclick="document.form1.submit()">确认提交</a></dd>
+            </dl>
         </div>
     </form>
 </div>
-
 @section Scripts {
 <script type="text/javascript">
-    var form = document.querySelector('.admin-form');
-    form.addEventListener('submit', function (event) {
-        if (!document.getElementById('SiteName').value.trim()) {
-            event.preventDefault();
-            window.alert('网站名称不可为空');
-        }
+    layui.use(['element', 'layer', 'jquery', 'upload', 'form'], function () {
+        var $ = layui.jquery,
+            form = layui.form,
+            layer = layui.layer,
+            upload = layui.upload,
+            element = layui.element;
     });
 </script>
 }

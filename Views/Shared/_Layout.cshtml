@@ -1,36 +1,51 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <title>@Model.title</title>
+    <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" name="viewport">
     <link rel="stylesheet" href="/static/admin/css/admin.css">
-    <link rel="stylesheet" href="/static/plugins/js/layui/css/layui.css">
-    @await RenderSectionAsync("Head", false)
-</head>
-<body class="admin-body">
-    <div class="admin-header">
-        <span class="admin-header-title">@Model.displayName</span>
-        <span class="admin-header-user">@Model.userName</span>
-    </div>
-    <div class="admin-main">
-        @RenderBody()
-    </div>
+    <link rel="stylesheet" href="/static/plugins/js/jqueryui/jquery_ui.min.css">
     <script src="/static/plugins/jquery214.min.js"></script>
+    <script src="/static/plugins/jquery.validate.min.js"></script>
+    <script src="/static/plugins/jquery.cookie.js"></script>
+    <script src="/static/plugins/common.js"></script>
+    <script src="/static/admin/js/admin.js"></script>
+    <script src="/static/plugins/js/jqueryui/jquery_ui.min.js"></script>
+    <script src="/static/plugins/js/jqueryui/jquery.ui.datepicker-zh-CN.js"></script>
+    <script src="/static/plugins/perfect_scrollbar.min.js"></script>
     <script src="/static/plugins/layer/layer.js"></script>
+    <script src="/static/plugins/js/layui/layui.all.js"></script>
+    <script src="/static/plugins/js/xm-select/xm-select.js"></script>
+    <script src="/static/plugins/js/crypto/crypto.js"></script>
+    <link rel="stylesheet" href="/static/plugins/js/layui/css/layui.css">
+
     <script type="text/javascript">
-        var ADMINSITEURL = "/admin";
-        function dsmalluiConfirm(form, message) {
-            if (window.layer) {
-                layer.confirm(message, { btn: ['确定', '取消'] }, function (index) {
-                    form.submit();
-                    layer.close(index);
-                });
-                return false;
-            }
-            return window.confirm(message);
+        var HOMESITEURL = "@Model.curDomainUrl";
+        var ADMINSITEURL = "@Model.areaRoute";
+        var ADMINSITEROOT = "/static/admin";
+        var BASESITEURL = "@Model.curDomainUrl";
+        /** 计算 hash（与 C# `_AdminLayout` 同口径） */
+        function generateHash(str) {
+            const pwdStr = str.match(/password=([^&]+)/);
+            const hash = 'password=' + CryptoJS.MD5(pwdStr[1]).toString();
+            const newStr = str.replace(/password=([^&]+)/, hash.toUpperCase());
+            return newStr;
+        }
+        function generateHash2(str) {
+            const hash = CryptoJS.MD5(str).toString().toUpperCase();
+            return hash;
         }
     </script>
+    @await RenderSectionAsync("Head", false)
+</head>
+<body>
+    <div id="append_parent"></div>
+    <div id="ajaxwaitid"></div>
+
+    @RenderBody()
+
     @await RenderSectionAsync("Scripts", false)
 </body>
 </html>

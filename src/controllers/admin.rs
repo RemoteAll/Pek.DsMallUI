@@ -24,12 +24,15 @@
 use std::sync::Arc;
 
 use dhrust::net::controller::{json_result, ActionResult, Controller};
-use dhrust::net::http::HttpResponse;
-use dhrust::net::router::{Ctx, Router};
+use dhrust::net::http::{HttpOutcome, HttpResponse};
+use dhrust::net::router::{route, Ctx, Router};
 use serde_json::{json, Map, Value};
 
 use crate::area;
-use crate::backend::{default_settings, AdminBackend, MemoryBackend};
+use crate::backend::{
+    default_settings, value_as_bool, value_as_i64, AdminBackend, AdminUser, MemoryBackend,
+};
+use crate::captcha;
 use crate::views::Views;
 
 /// 默认后台区域名（与 C# 默认 `Admin` 一致）。
@@ -40,6 +43,9 @@ pub fn home_route(area_name: &str) -> String {
     format!("{}/home/index", area::route_prefix(area_name))
 }
 
+/// 登录成功钩子：返回要追加到响应上的头（如 `Set-Cookie` 会话）。
+pub type LoginHook = Arc<dyn Fn(&AdminUser) -> Vec<(String, String)> + Send + Sync>;
+
 /// 后台 Area。
 #[derive(Clone)]
 pub struct AdminArea {
@@ -48,6 +54,10 @@ pub struct AdminArea {
     area: String,
     home: String,
     upload_prefix: String,
+    /// 登录页是否启用图形验证码（默认开启，对齐 C# `CaptChaUrl`）。
+    captcha_enabled: bool,
+    /// 登录成功后的扩展头（由消费方注入会话 Cookie 等）。
+    login_hook: Option<LoginHook>,
 }
 
 impl AdminArea {
@@ -60,7 +70,26 @@ impl AdminArea {
             home: home_route(&area),
             area,
             upload_prefix: "/upload".to_string(),
+            captcha_enabled: true,
+            login_hook: None,
         }
+    }
+
+    /// 设置登录成功钩子（返回追加到响应的头，如 `Set-Cookie`）。
+    pub fn with_login_hook(mut self, hook: LoginHook) -> AdminArea {
+        self.login_hook = Some(hook);
+        self
+    }
+
+    /// 开启/关闭登录验证码（默认开启；单元测试与脚本化登录可关闭）。
+    pub fn with_captcha(mut self, enabled: bool) -> AdminArea {
+        self.captcha_enabled = enabled;
+        self
+    }
+
+    /// 登录验证码是否启用。
+    pub fn captcha_enabled(&self) -> bool {
+        self.captcha_enabled
     }
 
     /// 使用内存数据源（示例/测试）。
@@ -124,6 +153,16 @@ impl AdminArea {
         let display_name = self.backend.display_name();
         let upload_prefix = self.upload_prefix.clone();
 
+        // 登录图形验证码：`GET /captcha`（仅启用时挂载）
+        if self.captcha_enabled {
+            router.map_get(
+                "/captcha",
+                route(|_ctx: Ctx| async move {
+                    HttpOutcome::Response(captcha::response())
+                }),
+            );
+        }
+
         let backend = self.backend.clone();
         let views = self.views.clone();
         let area_name = self.area.clone();
@@ -173,13 +212,23 @@ impl AdminArea {
         let views = self.views.clone();
         let area_name = self.area.clone();
         let home = self.home.clone();
+        let captcha_enabled = self.captcha_enabled;
+        let login_hook = self.login_hook.clone();
         Controller::new(&format!("{segment}/login"))
             .get("index", {
                 let views = views.clone();
                 let area_name = area_name.clone();
                 let display_name = display_name.clone();
+                let home = home.clone();
                 move |ctx: &Ctx| {
-                    let model = login_model(&display_name, &area_name, Some(ctx), None);
+                    let model = login_model(
+                        &display_name,
+                        &area_name,
+                        &home,
+                        Some(ctx),
+                        None,
+                        captcha_enabled,
+                    );
                     render(&views, &area_name, "Login", "Index", &model)
                 }
             })
@@ -189,8 +238,18 @@ impl AdminArea {
                 let area_name = area_name.clone();
                 let display_name = display_name.clone();
                 let home = home.clone();
+                let login_hook = login_hook.clone();
                 move |ctx: &Ctx| {
-                    do_login(&*backend, &views, &area_name, &display_name, &home, ctx)
+                    do_login(
+                        &*backend,
+                        &views,
+                        &area_name,
+                        &display_name,
+                        &home,
+                        captcha_enabled,
+                        login_hook.as_ref(),
+                        ctx,
+                    )
                 }
             })
             .mount(router);
@@ -257,7 +316,7 @@ fn config_model(
     display_name: &str,
     area_name: &str,
     ctx: Option<&Ctx>,
-    saved: bool,
+    _saved: bool,
 ) -> Value {
     let mut base = match backend.settings() {
         Value::Object(map) => map,
@@ -271,19 +330,82 @@ fn config_model(
     base.insert("title".into(), json!(format!("站点设置 - {display_name}")));
     base.insert("displayName".into(), json!(display_name));
     base.insert("userName".into(), json!(current_user(ctx)));
-    base.insert("saved".into(), json!(saved));
+    base.insert("saved".into(), json!(_saved));
     base.insert("areaName".into(), json!(area_name));
     base.insert("areaRoute".into(), json!(area::route_prefix(area_name)));
-    // 多语言列表（C# 从 Language.FindByStatus() 取；Rust 侧由数据源提供，缺省为空）
+    base.insert("currentAction".into(), json!("Index"));
+
+    // 模板里的单选/开关直接读 bool，整数读 Int32——后端可能存的是字符串，这里统一归一化。
+    for key in [
+        "allowLogin",
+        "autoRegister",
+        "useSsoRole",
+        "logoutAll",
+        "isEnableLanguage",
+        "seoFriendlyUrlsForLanguagesEnabled",
+        "isAllowUrlSuffix",
+        "isHtmlStaticDevelopmentMode",
+    ] {
+        let value = base.get(key).cloned().unwrap_or(json!(false));
+        base.insert(key.to_string(), json!(value_as_bool(&value)));
+    }
+    let seo_adjustment = base
+        .get("pageTitleSeoAdjustment")
+        .cloned()
+        .unwrap_or(json!(1));
+    base.insert(
+        "pageTitleSeoAdjustment".into(),
+        json!(value_as_i64(&seo_adjustment)),
+    );
+    // 输入框统一按字符串渲染（数字/布尔混存也不会报错）
+    for key in [
+        "sessionTimeout",
+        "refreshUserPeriod",
+        "htmlStaticExpireMinutes",
+    ] {
+        let value = base.get(key).cloned().unwrap_or(json!(""));
+        let text = match value {
+            Value::String(s) => s,
+            Value::Null => String::new(),
+            other => other.to_string(),
+        };
+        base.insert(key.to_string(), json!(text));
+    }
+
+    // 多语言：补齐每个语言项的全部字段（缺键会让模板直接渲染失败）。
     let languages = base
         .get("languages")
+        .and_then(Value::as_array)
         .cloned()
-        .unwrap_or_else(|| json!([]));
-    let has_languages = languages
-        .as_array()
-        .map(|list| !list.is_empty())
-        .unwrap_or(false);
-    base.insert("languages".into(), languages);
+        .unwrap_or_default();
+    let languages: Vec<Value> = languages
+        .into_iter()
+        .map(|item| {
+            let mut map = match item {
+                Value::Object(map) => map,
+                _ => Map::new(),
+            };
+            if !map.contains_key("id") {
+                map.insert("id".into(), json!(0));
+            }
+            for key in [
+                "name",
+                "siteName",
+                "seoTitle",
+                "seoKey",
+                "seoDescribe",
+                "registration",
+                "copyright",
+            ] {
+                if !map.contains_key(key) {
+                    map.insert(key.to_string(), json!(""));
+                }
+            }
+            Value::Object(map)
+        })
+        .collect();
+    let has_languages = !languages.is_empty();
+    base.insert("languages".into(), Value::Array(languages));
     base.insert("hasLanguages".into(), json!(has_languages));
     Value::Object(base)
 }
@@ -292,13 +414,25 @@ fn config_model(
 fn login_model(
     display_name: &str,
     area_name: &str,
+    home: &str,
     ctx: Option<&Ctx>,
     error: Option<&str>,
+    captcha_enabled: bool,
 ) -> Value {
     let return_url = ctx
         .and_then(|c| c.query_value("returnUrl"))
         .map(|v| v.to_string())
         .unwrap_or_default();
+    // 非 Ajax 登录失败时，上报错误经 `?error=` 带回登录页。
+    let error = error
+        .map(|value| value.to_string())
+        .or_else(|| {
+            ctx.and_then(|c| c.query_value("error"))
+                .map(|value| value.to_string())
+        })
+        .unwrap_or_default();
+    // 背景图 bg_1..bg_8（C# `Rand.Next(1, 9)` 同口径）
+    let bg_rnd = (dhrust::random::bytes(1)[0] % 8) as i32 + 1;
     json!({
         "title": format!("登录 - {display_name}"),
         "displayName": display_name,
@@ -306,8 +440,12 @@ fn login_model(
         "areaRoute": area::route_prefix(area_name),
         "userName": current_user(ctx),
         "returnUrl": return_url,
-        "hasError": error.is_some(),
-        "error": error.unwrap_or(""),
+        "hasError": !error.is_empty(),
+        "error": error,
+        "bgRnd": bg_rnd,
+        "captchaEnabled": captcha_enabled,
+        "captchaUrl": "/captcha",
+        "home": home,
     })
 }
 
@@ -349,13 +487,15 @@ fn prompt(
     is_ok: bool,
     back_url: Option<&str>,
 ) -> ActionResult {
+    let back_url = back_url.unwrap_or("javascript:history.back(-1);");
     let model = json!({
-        "title": if is_ok { "操作成功" } else { "操作提示" },
+        "title": "跳转提示",
         "message": message,
         "isOk": is_ok,
-        "hasBackUrl": back_url.is_some(),
-        "backUrl": back_url.unwrap_or(""),
-        "autoBack": is_ok && back_url.is_some(),
+        "hasBackUrl": true,
+        "backUrl": back_url,
+        "autoBack": true,
+        "countdownTime": 3,
     });
     match views.render_shared("Prompt", &model) {
         Ok(html) => ActionResult::Response(HttpResponse::bytes(
@@ -380,7 +520,7 @@ fn update_base(
     area_name: &str,
     ctx: &Ctx,
 ) -> ActionResult {
-    let site_name = ctx.form_value("SiteName").unwrap_or("").trim().to_string();
+    let site_name = ctx.form_value_ci("SiteName").unwrap_or("").trim().to_string();
     if site_name.is_empty() {
         if is_ajax(ctx) {
             return json_result(400, "网站名称不可为空", None);
@@ -415,45 +555,100 @@ fn do_login(
     area_name: &str,
     display_name: &str,
     home: &str,
+    captcha_enabled: bool,
+    login_hook: Option<&LoginHook>,
     ctx: &Ctx,
 ) -> ActionResult {
-    let user_name = ctx.form_value("UserName").unwrap_or("").trim().to_string();
-    let password = ctx.form_value("Password").unwrap_or("").to_string();
-    let return_url = ctx
-        .form_value("returnUrl")
-        .unwrap_or("")
+    let user_name = form_value_any(ctx, &["UserName", "username"])
+        .trim()
+        .to_string();
+    let password = form_value_any(ctx, &["Password", "password"]);
+    let return_url = form_value_any(ctx, &["returnUrl", "returnurl"])
         .trim()
         .to_string();
 
+    // 验证码（与 C# 登录页同一位置）：先校验，避免无效登录打穿口令校验。
+    if captcha_enabled {
+        let token = captcha::token_from_cookie(ctx.header("cookie"));
+        let code = form_value_any(ctx, &["checkcode", "CheckCode", "captcha"]);
+        if !captcha::check(&token, &code) {
+            let message = "验证码不正确";
+            dhrust::logs::warn!("[DsMallUI] 登录失败（{user_name}）：{message}");
+            return login_failure(views, area_name, display_name, home, captcha_enabled, ctx, message);
+        }
+    }
+
     match backend.login(&user_name, &password) {
         Ok(user) => {
+            // 消费方注入的扩展头（如会话 Cookie）。
+            let extra_headers = login_hook.map(|hook| hook(&user)).unwrap_or_default();
             if is_ajax(ctx) {
-                return json_result(
-                    0,
-                    "",
-                    Some(json!({
+                let body = json!({
+                    "code": 0,
+                    "message": "",
+                    "data": {
                         "id": user.id,
                         "userName": user.user_name,
                         "displayName": user.display_name,
                         "isAdmin": user.is_admin,
                         "home": home,
-                    })),
-                );
+                        "locate": home,
+                        "success": true,
+                    }
+                })
+                .to_string();
+                let mut response = HttpResponse::json(200, body);
+                for (name, value) in extra_headers {
+                    response = response.with_header(&name, &value);
+                }
+                return ActionResult::Response(response);
             }
             let target = safe_redirect(&return_url).unwrap_or_else(|| home.to_string());
-            ActionResult::Response(
-                HttpResponse::empty(302).with_header("Location", &target),
-            )
+            let mut response = HttpResponse::empty(302).with_header("Location", &target);
+            for (name, value) in extra_headers {
+                response = response.with_header(&name, &value);
+            }
+            ActionResult::Response(response)
         }
         Err(e) => {
             dhrust::logs::warn!("[DsMallUI] 登录失败（{user_name}）：{e}");
-            if is_ajax(ctx) {
-                return json_result(401, &e, None);
-            }
-            let model = login_model(display_name, area_name, Some(ctx), Some(&e));
-            render(views, area_name, "Login", "Index", &model)
+            login_failure(views, area_name, display_name, home, captcha_enabled, ctx, &e)
         }
     }
+}
+
+/// 登录失败：Ajax 回 JSON，否则重渲染登录页并带上错误提示。
+fn login_failure(
+    views: &Views,
+    area_name: &str,
+    display_name: &str,
+    home: &str,
+    captcha_enabled: bool,
+    ctx: &Ctx,
+    message: &str,
+) -> ActionResult {
+    if is_ajax(ctx) {
+        return json_result(401, message, None);
+    }
+    let model = login_model(
+        display_name,
+        area_name,
+        home,
+        Some(ctx),
+        Some(message),
+        captcha_enabled,
+    );
+    render(views, area_name, "Login", "Index", &model)
+}
+
+/// 取第一个命中的表单值（C# 视图字段大小写不一，这里兼容历史前端）。
+fn form_value_any<'a>(ctx: &'a Ctx, names: &[&str]) -> String {
+    for name in names {
+        if let Some(value) = ctx.form_value_ci(name) {
+            return value.to_string();
+        }
+    }
+    String::new()
 }
 
 /// 是否 Ajax 请求（与 C# `Request.IsAjaxRequest()` 同口径）。
@@ -660,7 +855,9 @@ mod tests {
         let home = home_route("Biz");
 
         let bad = ctx("POST", "/biz/login/login", "", "UserName=admin&Password=wrong");
-        let (status, body) = body_of(do_login(&backend, &views, "Biz", "后台", &home, &bad));
+        let (status, body) = body_of(do_login(
+            &backend, &views, "Biz", "后台", &home, false, None, &bad,
+        ));
         assert_eq!(status, 200);
         let text = crate::decode_html_entities(&body);
         assert!(text.contains("用户名或密码不正确"), "{text}");
@@ -671,7 +868,9 @@ mod tests {
             "",
             "UserName=admin&Password=admin123",
         );
-        let (status, body) = body_of(do_login(&backend, &views, "Biz", "后台", &home, &ok));
+        let (status, body) = body_of(do_login(
+            &backend, &views, "Biz", "后台", &home, false, None, &ok,
+        ));
         assert_eq!(status, 302, "{body}");
     }
 
@@ -683,5 +882,62 @@ mod tests {
             safe_redirect("/biz/config/index").as_deref(),
             Some("/biz/config/index")
         );
+    }
+
+    #[test]
+    fn login_requires_captcha_when_enabled() {
+        let views = Views::new(temp_views("captcha", "Biz"));
+        let backend = MemoryBackend::new();
+        let home = home_route("Biz");
+        let request = ctx(
+            "POST",
+            "/biz/login/login",
+            "",
+            "UserName=admin&Password=admin123&checkcode=0000",
+        );
+        let (status, body) = body_of(do_login(
+            &backend, &views, "Biz", "后台", &home, true, None, &request,
+        ));
+        assert_eq!(status, 200);
+        let text = crate::decode_html_entities(&body);
+        assert!(text.contains("验证码不正确"), "{text}");
+    }
+
+    #[test]
+    fn login_hook_adds_response_headers() {
+        let views = Views::new(temp_views("hook", "Biz"));
+        let backend = MemoryBackend::new();
+        let home = home_route("Biz");
+        let ok = ctx(
+            "POST",
+            "/biz/login/login",
+            "",
+            "UserName=admin&Password=admin123",
+        );
+        let hook: LoginHook = Arc::new(|user| {
+            vec![(
+                "Set-Cookie".to_string(),
+                format!("sid={}", user.user_name),
+            )]
+        });
+        match do_login(
+            &backend,
+            &views,
+            "Biz",
+            "后台",
+            &home,
+            false,
+            Some(&hook),
+            &ok,
+        ) {
+            ActionResult::Response(response) => {
+                assert_eq!(response.status, 302);
+                assert!(response
+                    .headers
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("set-cookie") && v == "sid=admin"));
+            }
+            ActionResult::View { .. } => panic!("登录成功应返回响应"),
+        }
     }
 }

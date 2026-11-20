@@ -42,16 +42,35 @@ pub const DEFAULT_VIEWS: &[(&str, &str)] = &[
     ),
 ];
 
-/// 视图根（`Views` 目录）。
+pub use dhrust::net::controller::ViewConvention as ViewLayout;
+
+/// 视图根（`Views` / `Areas` 目录）。
 #[derive(Debug, Clone)]
 pub struct Views {
     root: PathBuf,
+    layout: ViewLayout,
 }
 
 impl Views {
-    /// 以视图根目录创建（默认 `Views`）。
+    /// 以视图根目录创建（默认 `Views`，平铺布局）。
     pub fn new(root: impl Into<PathBuf>) -> Views {
-        Views { root: root.into() }
+        Views {
+            root: root.into(),
+            layout: ViewLayout::Flat,
+        }
+    }
+
+    /// 以 C# Areas 根目录创建（通常传 `Areas`）。
+    pub fn areas(root: impl Into<PathBuf>) -> Views {
+        Views {
+            root: root.into(),
+            layout: ViewLayout::Areas,
+        }
+    }
+
+    /// 当前目录布局。
+    pub fn layout(&self) -> ViewLayout {
+        self.layout
     }
 
     /// 视图根目录。
@@ -59,7 +78,9 @@ impl Views {
         &self.root
     }
 
-    /// 按 Area 约定渲染：`Views/{Area}/{Controller}/{Action}.cshtml`。
+    /// 按 Area 约定渲染：
+    /// - `Flat`：`Views/{Area}/{Controller}/{Action}.cshtml`
+    /// - `Areas`：`Areas/{Area}/Views/{Controller}/{Action}.cshtml`
     pub fn render(
         &self,
         area_name: &str,
@@ -90,30 +111,46 @@ impl Views {
         // Razor 子集对「取不存在的属性」是硬错误（`RenderError`），所以内置模板用到的键
         // 必须先补齐默认值，宿主只传业务字段也不会渲染失败。
         let model = with_template_defaults(model);
-        let full_controller = format!("{area_name}/{controller}");
+        let full_controller = self.layout.controller(area_name, controller);
         let renderer = ViewRenderer::with_root(&self.root)
+            .with_convention(self.layout)
             .with_fallback_area(area::DEFAULT_AREA);
         renderer
             .render(&full_controller, view, view, &model)
             .map_err(|e| format!("渲染 {full_controller}/{view} 失败：{e}"))
     }
 
-    /// 渲染共享视图：`Views/Shared/{Name}.cshtml`（如 `Prompt`）。
+    /// 渲染共享视图：
+    /// - `Flat`：`Views/Shared/{Name}.cshtml`
+    /// - `Areas`：`Areas/{Area}/Views/Shared/{Name}.cshtml`（默认区域 `Admin`）
     pub fn render_shared(&self, name: &str, model: &Value) -> Result<String, String> {
         let model = with_template_defaults(model);
-        let renderer = ViewRenderer::with_root(&self.root);
+        let renderer = ViewRenderer::with_root(&self.root)
+            .with_convention(self.layout);
+        let (controller, label) = match self.layout {
+            ViewLayout::Flat => ("Shared".to_string(), format!("Shared/{name}")),
+            ViewLayout::Areas => (
+                self.layout.shared_controller(area::DEFAULT_AREA),
+                format!("{}/Views/Shared/{name}", area::DEFAULT_AREA),
+            ),
+        };
         renderer
-            .render("Shared", name, name, &model)
-            .map_err(|e| format!("渲染 Shared/{name} 失败：{e}"))
+            .render(&controller, name, name, &model)
+            .map_err(|e| format!("渲染 {label} 失败：{e}"))
     }
 
     /// 视图是否存在（用于部署自检；大小写按文件系统语义）。
     pub fn exists(&self, area_name: &str, controller: &str, action: &str) -> bool {
-        self.root
-            .join(area_name.trim_matches('/'))
-            .join(controller.trim_matches('/'))
-            .join(format!("{action}.cshtml"))
-            .is_file()
+        let area_name = area_name.trim_matches('/');
+        let base = match self.layout {
+            ViewLayout::Flat => self.root.join(area_name).join(controller.trim_matches('/')),
+            ViewLayout::Areas => self
+                .root
+                .join(area_name)
+                .join("Views")
+                .join(controller.trim_matches('/')),
+        };
+        base.join(format!("{action}.cshtml")).is_file()
     }
 
     /// 解析实际使用的区域目录（`{Area}` → 回退 `Admin`）。
@@ -131,6 +168,16 @@ impl Views {
             return Some(area::DEFAULT_AREA.to_string());
         }
         None
+    }
+
+    /// 按当前布局落地默认视图（只补缺失，不覆盖已有文件）。
+    pub fn materialize(&self, area_name: &str) -> std::io::Result<usize> {
+        materialize_with_layout(&self.root, area_name, self.layout, false)
+    }
+
+    /// 强制刷新内置视图（覆盖已有文件；用于升级模板，调用方需自行备份定制）。
+    pub fn refresh(&self, area_name: &str) -> std::io::Result<usize> {
+        materialize_with_layout(&self.root, area_name, self.layout, true)
     }
 }
 
@@ -167,6 +214,12 @@ fn with_template_defaults(model: &Value) -> Value {
         ("hasError", json!(false)),
         ("error", json!("")),
         ("returnUrl", json!("")),
+        ("countdownTime", json!(3)),
+        ("currentAction", json!("Index")),
+        ("bgRnd", json!(1)),
+        ("captchaEnabled", json!(true)),
+        ("captchaUrl", json!("/captcha")),
+        ("home", json!("")),
         // 后台首页（Home/Index.cshtml）
         ("areaName", json!(area::DEFAULT_AREA)),
         ("areaRoute", json!(area::route_prefix(area::DEFAULT_AREA))),
@@ -185,28 +238,64 @@ fn with_template_defaults(model: &Value) -> Value {
 /// 默认视图的规范位置是 `Admin/…`；`area` 非默认时写到 `{Area}/…`
 /// （便于项目在改区域名后仍有一份可编辑的副本）。
 pub fn materialize_for(root: impl AsRef<Path>, area_name: &str) -> std::io::Result<usize> {
+    materialize_with_layout(root.as_ref(), area_name, ViewLayout::Flat, false)
+}
+
+/// 把内置默认视图按 **C# Areas 目录规范**落地（`Areas/{Area}/Views/...`）。
+pub fn materialize_areas_for(root: impl AsRef<Path>, area_name: &str) -> std::io::Result<usize> {
+    materialize_with_layout(root.as_ref(), area_name, ViewLayout::Areas, false)
+}
+
+fn materialize_with_layout(
+    root: &Path,
+    area_name: &str,
+    layout: ViewLayout,
+    overwrite: bool,
+) -> std::io::Result<usize> {
     let normalized = area::normalize(area_name)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.message()))?;
-    let root = root.as_ref();
     let mut written = 0;
     for (relative, source) in DEFAULT_VIEWS {
-        let target_relative = if area::is_default(&normalized) {
-            relative.to_string()
-        } else {
-            match relative.strip_prefix("Admin/") {
-                Some(tail) => format!("{normalized}/{tail}"),
-                // `Shared/…` 不随区域变化
-                None => relative.to_string(),
+        let (target_relative, content) = match *relative {
+            // 布局与共享视图：路径由 dhrust 的约定统一给出
+            "Shared/_Layout.cshtml" => {
+                let target = match layout {
+                    ViewLayout::Flat => "Shared/_Layout.cshtml".to_string(),
+                    ViewLayout::Areas => layout.view_path(&normalized, "Shared", "_AdminLayout"),
+                };
+                (target, (*source).to_string())
+            }
+            "Shared/Prompt.cshtml" => (
+                layout.shared_path(&normalized, "Prompt"),
+                (*source).to_string(),
+            ),
+            other => {
+                let (controller, view) = other
+                    .strip_prefix("Admin/")
+                    .and_then(|tail| tail.rsplit_once('/'))
+                    .map(|(controller, file)| {
+                        (
+                            controller.to_string(),
+                            file.trim_end_matches(".cshtml").to_string(),
+                        )
+                    })
+                    .unwrap_or_else(|| ("Home".to_string(), "Index".to_string()));
+                let target = layout.view_path(&normalized, &controller, &view);
+                let content = source.replace(
+                    "Layout = \"Shared/_Layout\"",
+                    &format!("Layout = \"{}\"", layout.layout_name(&normalized)),
+                );
+                (target, content)
             }
         };
         let path = root.join(target_relative.replace('/', std::path::MAIN_SEPARATOR_STR));
-        if path.is_file() {
+        if path.is_file() && !overwrite {
             continue;
         }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&path, source)?;
+        std::fs::write(&path, content)?;
         written += 1;
     }
     Ok(written)
@@ -257,6 +346,25 @@ mod tests {
         let dir = temp_dir("bad");
         let err = materialize_for(&dir, "a/b").unwrap_err();
         assert!(err.to_string().contains("只能包含"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn areas_layout_materializes_and_renders() {
+        let dir = temp_dir("areas");
+        let views = Views::areas(&dir);
+        assert_eq!(views.materialize("Admin").unwrap(), DEFAULT_VIEWS.len());
+        assert!(dir.join("Admin/Views/Config/Index.cshtml").is_file());
+        assert!(dir.join("Admin/Views/Shared/_AdminLayout.cshtml").is_file());
+        assert!(dir.join("Admin/Views/Shared/Prompt.cshtml").is_file());
+
+        let html = views
+            .render("Admin", "Config", "Index", &json!({ "siteName": "示例站点" }))
+            .unwrap();
+        let text = crate::decode_html_entities(&html);
+        assert!(text.contains("站点设置"), "{}", &text[..text.len().min(400)]);
+        assert!(text.contains("示例站点"), "{}", &text[..text.len().min(800)]);
+        assert!(html.contains("</html>"), "应套用 Areas 布局");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

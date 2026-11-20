@@ -34,7 +34,7 @@ use dhrust::net::router::Router;
 use dhrust::net::static_files::StaticFiles;
 
 use crate::backend::{AdminBackend, MemoryBackend};
-use crate::controllers::admin::AdminArea;
+use crate::controllers::admin::{AdminArea, LoginHook};
 use crate::controllers::upload::UploadController;
 use crate::ueditor::{UeditorConfig, UeditorService};
 use crate::views::Views;
@@ -121,7 +121,9 @@ impl DsMallUi {
     /// - 视图 → `<views_root>/{area}/…`（默认区域落 `Views/Admin/…`）；
     /// - 配置 → `<web_root>/ueconfig.json`（若已存在则跳过）。
     pub fn materialize_defaults(&self) -> Result<usize, String> {
-        let written = crate::views::materialize_for(self.views.root(), self.admin.area_name())
+        let written = self
+            .views
+            .materialize(self.admin.area_name())
             .map_err(|e| format!("落地默认视图失败（{}）：{e}", self.views.root().display()))?;
         let config_path = self.web_root.join("ueconfig.json");
         if !config_path.is_file() {
@@ -147,6 +149,8 @@ pub struct DsMallUiBuilder {
     ueditor_config: Option<PathBuf>,
     max_upload_bytes: u64,
     embedded_statics: Vec<(&'static str, &'static [u8])>,
+    login_hook: Option<LoginHook>,
+    csharp_areas: bool,
 }
 
 impl Default for DsMallUiBuilder {
@@ -160,6 +164,8 @@ impl Default for DsMallUiBuilder {
             ueditor_config: None,
             max_upload_bytes: DEFAULT_MAX_UPLOAD_BYTES,
             embedded_statics: Vec::new(),
+            login_hook: None,
+            csharp_areas: false,
         }
     }
 }
@@ -195,6 +201,22 @@ impl DsMallUiBuilder {
     /// 非法名称（空 / 非字母开头 / 含路径符号）会在 [`DsMallUiBuilder::build`] 报错。
     pub fn admin_area(mut self, area: impl Into<String>) -> Self {
         self.admin_area = area.into();
+        self
+    }
+
+    /// 登录成功钩子（返回追加头，如 `Set-Cookie` 会话）。
+    ///
+    /// 登录校验、验证码与登录页仍由 `Pek.DsMallUI` 负责；消费方只在这里落自己的会话。
+    pub fn login_hook(mut self, hook: LoginHook) -> Self {
+        self.login_hook = Some(hook);
+        self
+    }
+
+    /// 使用 C# Areas 目录规范：`Areas/{Area}/Views/{Controller}/{Action}.cshtml`。
+    ///
+    /// 默认关闭（保持旧的 `Views/{Area}/...` 布局）；开启后 `views_root` 应指向 `Areas`。
+    pub fn csharp_areas(mut self, enabled: bool) -> Self {
+        self.csharp_areas = enabled;
         self
     }
 
@@ -243,11 +265,18 @@ impl DsMallUiBuilder {
             service = service.try_with_config_path(path)?;
         }
 
-        let views = Views::new(self.views_root);
+        let views = if self.csharp_areas {
+            Views::areas(self.views_root)
+        } else {
+            Views::new(self.views_root)
+        };
         let upload = UploadController::new(service, upload_root.clone());
-        let admin = AdminArea::new(self.backend, views.clone())
+        let mut admin = AdminArea::new(self.backend, views.clone())
             .with_area_name(&self.admin_area)?
             .with_upload_prefix(&upload_prefix);
+        if let Some(hook) = self.login_hook {
+            admin = admin.with_login_hook(hook);
+        }
 
         Ok(DsMallUi {
             web_root: self.web_root,
@@ -356,7 +385,12 @@ mod tests {
             .static_files()
             .try_serve_file("/app.js")
             .expect("磁盘 wwwroot 文件应命中");
-        assert_eq!(response.body.as_ref(), b"disk-content");
+        // dhrust 静态文件为流式响应：磁盘命中时 `body` 为空、实际内容在 `file`。
+        let body = match &response.file {
+            Some(file) => std::fs::read(&file.path).unwrap(),
+            None => response.body.to_vec(),
+        };
+        assert_eq!(body, b"disk-content");
 
         // 默认不嵌入：磁盘删掉后就命中不了（若曾编译进二进制则仍会命中）
         std::fs::remove_file(root.join("app.js")).unwrap();
@@ -380,7 +414,11 @@ mod tests {
         // 未显式嵌入 → 磁盘内容
         let ui = DsMallUi::builder().web_root(&root).build().unwrap();
         let response = ui.static_files().try_serve_file("/app.js").unwrap();
-        assert_eq!(response.body.as_ref(), b"disk-content");
+        let disk_body = match &response.file {
+            Some(file) => std::fs::read(&file.path).unwrap(),
+            None => response.body.to_vec(),
+        };
+        assert_eq!(disk_body, b"disk-content");
 
         // 显式嵌入 → 嵌入优先
         let ui = DsMallUi::builder()

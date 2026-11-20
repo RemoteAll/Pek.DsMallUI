@@ -1,44 +1,147 @@
 @{
-    // Razor 子集不支持 `Layout = null`（引擎要求字符串）；不声明 Layout 即独立页面
+    // Razor 子集不支持 `Layout = null`；不声明 Layout 即独立页面
 }
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>登录 - @Model.displayName</title>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>@Model.title</title>
+    <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" name="viewport">
     <link rel="stylesheet" href="/static/admin/css/admin.css">
+    <link rel="stylesheet" href="/static/plugins/js/jqueryui/jquery_ui.min.css">
+    <script src="/static/plugins/jquery214.min.js"></script>
+    <script src="/static/plugins/jquery.validate.min.js"></script>
+    <script src="/static/plugins/jquery.cookie.js"></script>
+    <script src="/static/plugins/common.js"></script>
+    <script src="/static/admin/js/admin.js"></script>
+    <script src="/static/plugins/js/jqueryui/jquery_ui.min.js"></script>
+    <script src="/static/plugins/js/jqueryui/jquery.ui.datepicker-zh-CN.js"></script>
+    <script src="/static/plugins/perfect_scrollbar.min.js"></script>
+    <script src="/static/plugins/layer/layer.js"></script>
+    <script src="/static/plugins/js/crypto/crypto.js"></script>
+    <script src="/static/plugins/js/layui/layui.all.js"></script>
+    <link rel="stylesheet" href="/static/plugins/js/layui/css/layui.css">
+    <script src="/static/js/Storage.js"></script>
+    <script type="text/javascript">
+        var HOMESITEURL = "@Model.curDomainUrl";
+        var ADMINSITEURL = "@Model.areaRoute";
+    </script>
     <style>
-        body { background: #f2f4f7; }
-        .login { width: 360px; margin: 120px auto; background: #fff; border-radius: 6px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,.08); }
-        .login h2 { margin: 0 0 6px; font-size: 18px; text-align: center; }
-        .login .area { margin: 0 0 18px; text-align: center; color: #999; font-size: 12px; }
-        .login-row { margin-bottom: 14px; }
-        .login-row label { display: block; margin-bottom: 6px; color: #555; }
-        .login-row input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #d9d9d9; border-radius: 4px; }
-        .login-btn { width: 100%; padding: 10px; border: 0; border-radius: 4px; background: #1677ff; color: #fff; font-size: 15px; cursor: pointer; }
-        .login-error { color: #d93026; margin-bottom: 12px; }
+        body {
+            background-image: url('/static/admin/images/wallpage/bg_@(Model.bgRnd).jpg');
+            background-size: cover;
+        }
     </style>
 </head>
 <body>
+    <div id="append_parent"></div>
+    <div id="ajaxwaitid"></div>
+
     <div class="login">
-        <h2>@Model.displayName</h2>
-        <p class="area">区域：@Model.areaName</p>
-        @if (Model.hasError) {
-        <div class="login-error">@Model.error</div>
-        }
-        <form method="post" action="@Model.areaRoute/login/login">
-            <input type="hidden" name="returnUrl" value="@Model.returnUrl">
-            <div class="login-row">
-                <label for="UserName">用户名</label>
-                <input type="text" id="UserName" name="UserName" value="@Model.userName" autocomplete="username" required>
+        <div class="login_body">
+            <div class="login_header">
+                <img src="/static/admin/images/logo.png" />
             </div>
-            <div class="login-row">
-                <label for="Password">密码</label>
-                <input type="password" id="Password" name="Password" autocomplete="current-password" required>
+            <div class="login_content">
+                <form method="post" id="login_form">
+                    <div class="form-group">
+                        <input type="text" id="username" name="username" placeholder="用户名/邮箱/手机/编码" required class="text">
+                    </div>
+                    <div class="form-group">
+                        <input type="password" id="password" name="password" placeholder="密码" required class="text">
+                    </div>
+                    @if (Model.captchaEnabled) {
+                    <div class="form-group">
+                        <input type="text" id="checkcode" name="checkcode" placeholder="图形验证码" required class="text" style="width:60%;float:left;">
+                        <img src="@Model.captchaUrl" style="width:30%;height:38px;" id="change_captcha" />
+                    </div>
+                    }
+                    <div class="form-group">
+                        <input type="hidden" name="keeplogin" value="true" />
+                        <input type="hidden" name="returnUrl" value="@Model.returnUrl" />
+                        <input type="button" class="btn" id="login_btn" value="登录" style="width:100%" />
+                    </div>
+                </form>
+                <div id="login_error" data-message="@Model.error" style="display:none"></div>
             </div>
-            <button type="submit" class="login-btn">登录</button>
-        </form>
+        </div>
     </div>
+    <script>
+        $(function () {
+            if (window.self !== window.top) {
+                var currentPath = window.location.pathname;
+                window.top.location.href = currentPath;
+            }
+
+            var errorBox = document.getElementById('login_error');
+            if (errorBox && errorBox.getAttribute('data-message')) {
+                layer.msg(errorBox.getAttribute('data-message'));
+            }
+
+            $(document).keyup(function (event) {
+                if (event.keyCode == 13) {
+                    login_form();
+                }
+            });
+
+            $('#login_btn').on('click', function () {
+                login_form();
+            });
+
+            function generateHash(str) {
+                const pwdStr = str.match(/password=([^&]+)/);
+                const hash = 'password=' + CryptoJS.MD5(pwdStr[1]).toString();
+                const newStr = str.replace(/password=([^&]+)/, hash.toUpperCase());
+                return newStr;
+            }
+
+            function login_form() {
+                if ($('#username').val().length == 0) {
+                    layer.msg('账号不能为空');
+                    return;
+                }
+
+                if ($('#password').val().length == 0) {
+                    layer.msg('密码不能为空');
+                    return;
+                }
+
+                if ($('#checkcode').length && $('#checkcode').val().length == 0) {
+                    layer.msg('验证码不能为空');
+                    return;
+                }
+
+                var _form = generateHash($('#login_form').serialize());
+                $.ajax({
+                    type: "POST",
+                    url: "@(Model.areaRoute)/login/login",
+                    data: _form,
+                    dataType: 'json',
+                    success: function (res) {
+                        if (res.success || res.code === 0) {
+                            layer.msg('登录成功', { time: 1500 }, function () {
+                                var target = res.locate;
+                                if (!target && res.data) {
+                                    target = res.data.locate || res.data.home;
+                                }
+                                location.href = target || "@Model.home";
+                            });
+                        } else {
+                            layer.msg(res.msg || res.message || '登录失败', { time: 1500 }, function () {
+                                $('#change_captcha').attr('src', '@(Model.captchaUrl)?t=' + (new Date().getTime()));
+                                $('#password').val("");
+                                $('#checkcode').val("");
+                            });
+                        }
+                    }
+                });
+            }
+
+            $('#change_captcha').click(function () {
+                $(this).attr('src', '@(Model.captchaUrl)?t=' + (new Date().getTime()));
+            });
+        });
+    </script>
 </body>
 </html>

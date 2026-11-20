@@ -72,6 +72,7 @@
 
 pub mod area;
 pub mod backend;
+pub mod captcha;
 pub mod controllers;
 pub mod models;
 pub mod multipart;
@@ -81,13 +82,13 @@ pub mod views;
 
 pub use area::{AreaError, DEFAULT_AREA};
 pub use backend::{default_settings, AdminBackend, AdminUser, MemoryBackend};
-pub use controllers::admin::{home_route, AdminArea};
+pub use controllers::admin::{home_route, AdminArea, LoginHook};
 pub use controllers::upload::UploadController;
 pub use models::Hierarchy;
 pub use multipart::{FormData, MultipartError, Part};
 pub use options::{embedded_ueditor_config, DsMallUi, DsMallUiBuilder, UE_CONFIG_JSON};
 pub use ueditor::{UploadConfig, UploadOutcome, UploadState, Uploader, UeditorConfig, UeditorService};
-pub use views::Views;
+pub use views::{materialize_areas_for, materialize_for, ViewLayout, Views};
 
 /// crate 版本。
 pub fn version() -> &'static str {

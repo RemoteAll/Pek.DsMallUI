@@ -247,6 +247,11 @@ mod tests {
         req.path = "/images/a.txt".into();
         let response = statics.try_serve_request(&req).expect("应命中文件");
         assert_eq!(response.status, 200);
-        assert_eq!(response.body.as_ref(), b"hello");
+        // dhrust 静态文件为流式响应：磁盘命中时 `body` 为空、实际内容在 `file`。
+        let body = match &response.file {
+            Some(file) => std::fs::read(&file.path).unwrap(),
+            None => response.body.to_vec(),
+        };
+        assert_eq!(body, b"hello");
     }
 }

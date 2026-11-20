@@ -49,6 +49,9 @@ pub trait AdminBackend: Send + Sync {
 }
 
 /// 站点设置默认值（键为 camelCase，与模板 `@Model.xxx` 对应）。
+///
+/// 键集合对齐 C# `ConfigController.UpdateBase` 的参数与
+/// `Areas/Admin/Views/Config/Index.cshtml` 的字段，新增页面字段时两边一起补。
 pub fn default_settings() -> Value {
     json!({
         "siteName": "",
@@ -58,6 +61,7 @@ pub fn default_settings() -> Value {
         "seoDescribe": "",
         "registration": "",
         "copyright": "",
+        "companyName": "",
         "customerTel": "",
         "customerEmail": "",
         "urlSuffix": ".html",
@@ -66,29 +70,88 @@ pub fn default_settings() -> Value {
         "headerCustomHtml": "",
         "footerCustomHtml": "",
         "curDomainUrl": "",
+        "sessionTimeout": "0",
+        "refreshUserPeriod": "600",
+        "allowLogin": true,
+        "autoRegister": false,
+        "useSsoRole": true,
+        "logoutAll": false,
+        "isEnableLanguage": false,
+        "seoFriendlyUrlsForLanguagesEnabled": false,
+        "pageTitleSeoAdjustment": 1,
+        "isAllowUrlSuffix": true,
+        "isHtmlStaticDevelopmentMode": false,
+        "htmlStaticExpireMinutes": "60",
+        "serverToken": "",
+        "paswordStrength": "",
+        "starWeb": "",
+        "languages": [],
     })
 }
 
 /// 表单键（C# 视图字段名）→ 设置键（camelCase）。
+///
+/// 比较一律大小写不敏感（C# 模型绑定同口径）；同时接受页面实际提交的
+/// 非 Pascal 名称（如 `isEnableLanguage` / `sessiontimeout`）。
 fn form_key_to_setting(key: &str) -> Option<&'static str> {
-    Some(match key {
-        "SiteName" => "siteName",
-        "DisplayName" => "displayName",
-        "SeoTitle" => "seoTitle",
-        "SeoKey" => "seoKey",
-        "SeoDescribe" => "seoDescribe",
-        "Registration" => "registration",
-        "Copyright" => "copyright",
-        "CustomerTel" => "customerTel",
-        "CustomerEmail" => "customerEmail",
-        "UrlSuffix" => "urlSuffix",
-        "Statistical" => "statistical",
-        "PageFoot" => "pageFoot",
-        "HeaderCustomHtml" => "headerCustomHtml",
-        "FooterCustomHtml" => "footerCustomHtml",
-        "curDomainUrl" => "curDomainUrl",
+    let key = key.to_ascii_lowercase();
+    Some(match key.as_str() {
+        "sitename" => "siteName",
+        "displayname" => "displayName",
+        "seotitle" => "seoTitle",
+        "seokey" => "seoKey",
+        "seodescribe" => "seoDescribe",
+        "registration" => "registration",
+        "copyright" => "copyright",
+        "companyname" => "companyName",
+        "customertel" => "customerTel",
+        "customeremail" => "customerEmail",
+        "urlsuffix" => "urlSuffix",
+        "statistical" => "statistical",
+        "pagefoot" => "pageFoot",
+        "headercustomhtml" => "headerCustomHtml",
+        "footercustomhtml" => "footerCustomHtml",
+        "curdomainurl" => "curDomainUrl",
+        "sessiontimeout" => "sessionTimeout",
+        "refreshuserperiod" => "refreshUserPeriod",
+        "allowlogin" => "allowLogin",
+        "autoregister" => "autoRegister",
+        "usessorole" => "useSsoRole",
+        "logoutall" => "logoutAll",
+        "isenablelanguage" => "isEnableLanguage",
+        "seofriendlyurlsforlanguagesenabled" => "seoFriendlyUrlsForLanguagesEnabled",
+        "pagetitleseoadjustment" => "pageTitleSeoAdjustment",
+        "isallowurlsuffix" => "isAllowUrlSuffix",
+        "ishtmlstaticdevelopmentmode" => "isHtmlStaticDevelopmentMode",
+        "htmlstaticexpireminutes" => "htmlStaticExpireMinutes",
+        "servertoken" => "serverToken",
+        "paswordstrength" => "paswordStrength",
+        "starweb" => "starWeb",
         _ => return None,
     })
+}
+
+/// 表单值 → 布尔（`1/0`、`true/false`、`on/off`；缺省 false）。
+pub(crate) fn value_as_bool(value: &Value) -> bool {
+    match value {
+        Value::Bool(v) => *v,
+        Value::Number(n) => n.as_i64().unwrap_or(0) != 0,
+        Value::String(s) => matches!(
+            s.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "on" | "yes"
+        ),
+        _ => false,
+    }
+}
+
+/// 表单值 → 整数（缺省 0）。
+pub(crate) fn value_as_i64(value: &Value) -> i64 {
+    match value {
+        Value::Number(n) => n.as_i64().unwrap_or(0),
+        Value::String(s) => s.trim().parse::<i64>().unwrap_or(0),
+        Value::Bool(v) => i64::from(*v),
+        _ => 0,
+    }
 }
 
 /// 把表单键值合并进设置对象（未识别的键忽略；值一律按字符串处理）。
@@ -142,7 +205,9 @@ impl MemoryBackend {
         display_name: &str,
         is_admin: bool,
     ) -> &Self {
-        let stored = dhrust::sign::password::hash(password);
+        let stored = dhrust::sign::password::PasswordProvider::with_algorithm("md5+sha1")
+            .expect("md5+sha1 是受支持的口令算法")
+            .hash(password);
         let mut state = self.state.lock().expect("MemoryBackend 锁中毒");
         let id = state.users.len() as i64 + 1;
         match state
