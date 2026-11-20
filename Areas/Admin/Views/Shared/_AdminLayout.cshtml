@@ -1,3 +1,4 @@
+@* 内容页布局（对齐 C# `Areas/Admin/Views/Shared/_AdminLayout.cshtml`）：iframe 内的页面壳。 *@
 <!DOCTYPE html>
 <html>
 <head>
@@ -7,7 +8,6 @@
     <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" name="viewport">
     <link rel="stylesheet" href="/static/admin/css/admin.css">
     <link rel="stylesheet" href="/static/plugins/js/jqueryui/jquery_ui.min.css">
-    <link rel="stylesheet" href="/static/plugins/js/layui/css/layui.css">
     <script src="/static/plugins/jquery214.min.js"></script>
     <script src="/static/plugins/jquery.validate.min.js"></script>
     <script src="/static/plugins/jquery.cookie.js"></script>
@@ -20,8 +20,11 @@
     <script src="/static/plugins/js/layui/layui.all.js"></script>
     <script src="/static/plugins/js/xm-select/xm-select.js"></script>
     <script src="/static/plugins/js/crypto/crypto.js"></script>
+    <link rel="stylesheet" href="/static/plugins/js/layui/css/layui.css">
 
     <script type="text/javascript">
+        var HOMESITEURL = "/";
+        var BASESITEURL = "/";
         var ADMINSITEURL = "@Model.areaRoute";
         var ADMINSITEROOT = "/static/admin";
         /** 计算 hash（与 C# `_AdminLayout` 同口径） */
@@ -34,45 +37,14 @@
             return CryptoJS.MD5(str).toString().toUpperCase();
         }
     </script>
-    <style>
-        .cube-frame-body { position: absolute; left: 200px; right: 0; top: 60px; bottom: 44px; overflow: auto; background: #f2f2f2; }
-        .cube-frame-inner { padding: 12px 16px; }
-        .cube-logo { color: #fff; font-size: 16px; font-weight: 600; }
-    </style>
     @await RenderSectionAsync("Head", false)
 </head>
-<body class="layui-layout-body">
+<body>
     <div id="append_parent"></div>
     <div id="ajaxwaitid"></div>
 
-    <div class="layui-layout layui-layout-admin">
-        @* 顶栏 / 左侧菜单是独立的局部视图，与 C# `_Navbar.cshtml` / `_Left.cshtml` 同结构 *@
-        @await Html.PartialAsync("_Navbar", Model)
-        @await Html.PartialAsync("_Left", Model)
+    @RenderBody()
 
-        <div class="cube-frame-body">
-            <div class="cube-frame-inner">
-                @RenderBody()
-            </div>
-        </div>
-
-        <div class="layui-footer">@Model.copyright</div>
-    </div>
-
-    <script>
-        layui.use(['element'], function () {
-            var element = layui.element;
-            // 按当前地址高亮左侧菜单（服务端不参与判断，页页复用）
-            var path = (location.pathname || '').toLowerCase().replace(/\/$/, '');
-            var links = document.querySelectorAll('.layui-nav-tree a[href]');
-            for (var i = 0; i < links.length; i++) {
-                var href = (links[i].getAttribute('href') || '').toLowerCase().replace(/\/$/, '');
-                if (href && href.charAt(0) === '/' && href === path) {
-                    links[i].parentNode.classList.add('layui-this');
-                }
-            }
-        });
-    </script>
     @await RenderSectionAsync("Scripts", false)
 </body>
 </html>

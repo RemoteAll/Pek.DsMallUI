@@ -15,6 +15,8 @@ pub struct AdminMenu {
     pub title: String,
     /// 图标（layui 图标类名，可空）
     pub icon: String,
+    /// 后台骨架用的稳定标识（`nav_{key}` / `sort_{key}`）；为空时自动生成
+    pub key: String,
     /// 叶子地址（分组为空）
     pub url: String,
     /// 子菜单
@@ -52,9 +54,16 @@ impl AdminMenu {
         AdminMenu {
             title: title.into(),
             icon: icon.into(),
+            key: String::new(),
             url: String::new(),
             children,
         }
+    }
+
+    /// 指定后台骨架标识（`nav_{key}` / `sort_{key}`，一般用控制器名小写）。
+    pub fn with_key(mut self, key: impl Into<String>) -> AdminMenu {
+        self.key = key.into();
+        self
     }
 
     /// 是否分组（有子项）。
@@ -88,6 +97,57 @@ impl AdminMenu {
     /// 菜单列表 → JSON 数组。
     pub fn list_to_value(menus: &[AdminMenu]) -> Value {
         Value::Array(menus.iter().map(AdminMenu::to_value).collect())
+    }
+
+    /// 后台框架页模型（对齐参考项目 `Areas/Admin/Views/Home/DashBoard.cshtml`）：
+    /// 每个一级菜单是一个"模块"，模块下挂叶子项；叶子项预计算好
+    /// `controller` / `action` / `module`，模板只做展示与 `openItem()` 调用。
+    ///
+    /// - `key`：模块的 DOM 标识（`nav_{key}` / `sort_{key}` / `openItem('{key}')`），
+    ///   取自菜单 `icon` 之外的稳定字段：优先 `AdminMenu::key`，为空时按序号生成；
+    /// - `action` / `controller`：从叶子 `url`（`/admin/content/categories`）解析，
+    ///   只有控制器时 `action` 取 `index`（与 C# 的 `urlArray.Length == 1` 分支一致）。
+    pub fn modules_to_value(menus: &[AdminMenu], area_name: &str) -> Value {
+        let prefix = format!("{}/", area::route_prefix(area_name));
+        let modules: Vec<Value> = menus
+            .iter()
+            .enumerate()
+            .map(|(i, menu)| {
+                let key = if menu.key.is_empty() {
+                    format!("m{}", i + 1)
+                } else {
+                    menu.key.to_ascii_lowercase()
+                };
+                let items: Vec<Value> = menu
+                    .children
+                    .iter()
+                    .map(|child| {
+                        let path = child
+                            .url
+                            .strip_prefix(&prefix)
+                            .or_else(|| child.url.strip_prefix('/'))
+                            .unwrap_or(&child.url);
+                        let mut parts = path.split('/').filter(|s| !s.is_empty());
+                        let controller = parts.next().unwrap_or("").to_string();
+                        let action = parts.next().unwrap_or("index").to_string();
+                        json!({
+                            "title": child.title,
+                            "icon": child.icon,
+                            "controller": controller,
+                            "action": action,
+                            "module": key,
+                        })
+                    })
+                    .collect();
+                json!({
+                    "key": key,
+                    "title": menu.title,
+                    "icon": menu.icon,
+                    "items": items,
+                })
+            })
+            .collect();
+        Value::Array(modules)
     }
 }
 

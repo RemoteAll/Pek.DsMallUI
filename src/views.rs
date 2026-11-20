@@ -319,6 +319,7 @@ fn with_template_defaults(model: &Value) -> Value {
         ("captchaEnabled", json!(true)),
         ("captchaUrl", json!("/captcha")),
         ("home", json!("")),
+        ("mainUrl", json!("")),
         // 后台首页（Home/Index.cshtml）
         ("areaName", json!(area::DEFAULT_AREA)),
         ("areaRoute", json!(area::route_prefix(area::DEFAULT_AREA))),
@@ -373,7 +374,7 @@ mod tests {
         let second = materialize(&dir).unwrap();
         assert_eq!(second, 0, "二次落地必须全部跳过（幂等）");
         assert!(dir.join("Admin/Config/Index.cshtml").is_file());
-        assert!(dir.join("Shared/_Layout.cshtml").is_file());
+        assert!(dir.join("Shared/_AdminLayout.cshtml").is_file());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -384,7 +385,7 @@ mod tests {
         assert_eq!(written, EMBEDDED_VIEWS.len());
         // 库视图位置 = C# 约定位置（不按调用方区域复制；改名区域走回退解析）
         assert!(dir.join("Admin/Config/Index.cshtml").is_file());
-        assert!(dir.join("Shared/_Layout.cshtml").is_file());
+        assert!(dir.join("Shared/_AdminLayout.cshtml").is_file());
         // 二次落地幂等
         assert_eq!(materialize_for(&dir, "Biz").unwrap(), 0);
         let _ = std::fs::remove_dir_all(&dir);
@@ -404,7 +405,7 @@ mod tests {
         let views = Views::areas(&dir);
         assert_eq!(views.materialize("Admin").unwrap(), EMBEDDED_VIEWS.len());
         assert!(dir.join("Admin/Views/Config/Index.cshtml").is_file());
-        assert!(dir.join("Admin/Views/Shared/_Layout.cshtml").is_file());
+        assert!(dir.join("Admin/Views/Shared/_AdminLayout.cshtml").is_file());
         assert!(dir.join("Admin/Views/_ViewStart.cshtml").is_file());
         assert!(dir.join("Admin/Views/Shared/Prompt.cshtml").is_file());
 
@@ -415,13 +416,22 @@ mod tests {
         assert!(text.contains("站点设置"), "{}", &text[..text.len().min(400)]);
         assert!(text.contains("示例站点"), "{}", &text[..text.len().min(800)]);
         assert!(html.contains("</html>"), "应套用 Areas 布局");
-        // 顶部 + 左侧菜单由局部视图渲染（`_Layout` 里 PartialAsync 引用）
-        assert!(html.contains("layui-layout-admin"), "缺少框架布局");
-        assert!(html.contains("layui-logo"), "缺少顶部导航局部视图");
-        assert!(html.contains("layui-nav-tree"), "缺少左侧菜单局部视图");
-        // 局部视图单独存在，可被项目覆盖
-        assert!(dir.join("Admin/Views/Shared/_Navbar.cshtml").is_file());
-        assert!(dir.join("Admin/Views/Shared/_Left.cshtml").is_file());
+        // 只有 `_AdminLayout`（与 C# 同名同路径）；顶栏/侧栏由框架包提供，本项目不自造
+        assert!(html.contains("/static/admin/css/admin.css"), "缺少内容页布局样式");
+    }
+
+    #[test]
+    fn home_page_uses_admin_layout_without_selfmade_frame() {
+        // 首页只用 `_AdminLayout` + 内容；不再自己拼顶栏/左侧菜单（C# 里它们由框架包提供）
+        let dir = temp_dir("frame");
+        let views = Views::areas(&dir);
+        views.materialize("Admin").unwrap();
+        let html = views
+            .render("Admin", "Home", "Index", &json!({ "displayName": "站点" }))
+            .unwrap();
+        assert!(html.contains("/static/admin/css/admin.css"), "应套用 _AdminLayout");
+        assert!(!html.contains("layui-layout-admin"), "不应自造框架页：{html}");
+        assert!(!html.contains("cube-iframe"), "不应自造 iframe 框架：{html}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -448,7 +458,10 @@ mod tests {
             .unwrap();
         let text = crate::decode_html_entities(&html);
         assert!(text.contains("内置"), "{}", &text[..text.len().min(400)]);
-        assert!(html.contains("layui-layout-admin"), "布局应来自库内置模板");
+        assert!(
+            html.contains("/static/admin/css/admin.css"),
+            "布局应来自库内置模板"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -488,6 +501,7 @@ mod tests {
         let dir = temp_dir("home");
         materialize(&dir).unwrap();
         let views = Views::new(&dir);
+        // 首页只渲染内容（快照信息 + 快捷入口），布局由 `_ViewStart` 给 `_AdminLayout`
         let html = views
             .render(
                 "Admin",
@@ -496,14 +510,15 @@ mod tests {
                 &json!({
                     "areaName": "Biz",
                     "areaRoute": "/biz",
-                    "menus": [{ "name": "站点设置", "url": "/biz/config/index", "desc": "站点信息" }],
+                    "mainUrl": "/biz/home/main",
+                    "menus": [{ "name": "站点设置", "url": "/biz/config/index", "desc": "设置" }],
                     "hasMenus": true
                 }),
             )
             .unwrap();
         let text = crate::decode_html_entities(&html);
-        assert!(text.contains("Biz"), "{}", &text[..text.len().min(400)]);
         assert!(text.contains("站点设置"), "{}", &text[..text.len().min(600)]);
+        assert!(html.contains("/static/admin/css/admin.css"), "应套用 _AdminLayout");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

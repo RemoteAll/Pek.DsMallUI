@@ -212,6 +212,29 @@ impl AdminArea {
                     render(&views, &area_name, "Home", "Index", &model)
                 }
             })
+            .get("main", {
+                // 与 `/home/index` 用**同一个视图**：C# 里这是 iframe 的工作区，
+                // 本移植版不自己造框架页，两者内容一致（`mainUrl` 仍可用）。
+                let backend = backend.clone();
+                let views = views.clone();
+                let area_name = area_name.clone();
+                let display_name = display_name.clone();
+                let upload_prefix = upload_prefix.clone();
+                let menus = menus.clone();
+                let logout_url = logout_url.clone();
+                move |ctx: &Ctx| {
+                    let model = home_model(
+                        &*backend,
+                        &display_name,
+                        &area_name,
+                        &upload_prefix,
+                        &menus,
+                        &logout_url,
+                        Some(ctx),
+                    );
+                    render(&views, &area_name, "Home", "Index", &model)
+                }
+            })
             .mount(router);
 
         let backend = self.backend.clone();
@@ -355,6 +378,7 @@ fn home_model(
         "hasLeftMenus": has_left_menus,
         "currentPath": current_path(ctx),
         "home": home_route(area_name),
+        "mainUrl": format!("{route}/home/main"),
         "logoutUrl": resolve_url(logout_url, area_name),
         "copyright": format!("@ {display_name}"),
     })

@@ -1,4 +1,4 @@
-//! 门面：一次性组装「静态资源 + 上传控制器 + 后台 Area」，对外只暴露 [`DsMallUi`]。
+﻿//! 门面：一次性组装「静态资源 + 上传控制器 + 后台 Area」，对外只暴露 [`DsMallUi`]。
 //!
 //! 对应 C# 参考工程的 `PekStartup`（`IPekStartup` 实现）：
 //! `ConfigureServices` → [`DsMallUiBuilder`]；`UseDHEndpoints`/`Configure` → [`DsMallUi::mount`]。
@@ -58,6 +58,8 @@ pub struct DsMallUi {
     admin: AdminArea,
     /// 显式嵌入的静态资源（默认空：`wwwroot` 不编译进二进制）
     embedded_statics: Vec<(&'static str, &'static [u8])>,
+    /// 是否把库视图复制到项目目录（默认 `false`）
+    materialize_views: bool,
 }
 
 impl DsMallUi {
@@ -118,15 +120,17 @@ impl DsMallUi {
         StaticFiles::with_embedded(self.web_root.clone(), &self.embedded_statics)
     }
 
-    /// 首次部署：把内置视图与 `ueconfig.json` 落到磁盘（**只补缺失，不覆盖**）。
-    ///
-    /// - 视图 → `<views_root>/{area}/…`（默认区域落 `Views/Admin/…`）；
-    /// - 配置 → `<web_root>/ueconfig.json`（若已存在则跳过）。
+    /// 首次部署：把 `ueconfig.json` 落到磁盘（**只补缺失，不覆盖**）；
+    /// 视图**默认不落地**（库模板作为引用库视图直接可用），
+    /// 需要让项目拿到可编辑副本时，先用 [`DsMallUiBuilder::materialize_views`] 显式开启。
     pub fn materialize_defaults(&self) -> Result<usize, String> {
-        let written = self
-            .views
-            .materialize(self.admin.area_name())
-            .map_err(|e| format!("落地默认视图失败（{}）：{e}", self.views.root().display()))?;
+        let written = if self.materialize_views {
+            self.views
+                .materialize(self.admin.area_name())
+                .map_err(|e| format!("落地默认视图失败（{}）：{e}", self.views.root().display()))?
+        } else {
+            0
+        };
         let config_path = self.web_root.join("ueconfig.json");
         if !config_path.is_file() {
             if let Some(parent) = config_path.parent() {
@@ -165,6 +169,8 @@ pub struct DsMallUiBuilder {
     captcha: bool,
     /// 页面资源解析缓存 TTL（秒）。
     page_assets_ttl: u64,
+    /// 是否把库视图复制到项目目录（默认 `false`）。
+    materialize_views: bool,
 }
 
 impl Default for DsMallUiBuilder {
@@ -186,6 +192,7 @@ impl Default for DsMallUiBuilder {
             logout_url: String::new(),
             captcha: true,
             page_assets_ttl: 30,
+            materialize_views: false,
         }
     }
 }
@@ -309,6 +316,12 @@ impl DsMallUiBuilder {
         self
     }
 
+    /// 是否在 `materialize_views` 中把库视图复制到项目目录（默认关闭）。
+    pub fn materialize_views(mut self, enabled: bool) -> Self {
+        self.materialize_views = enabled;
+        self
+    }
+
     /// 组装。
     pub fn build(self) -> Result<DsMallUi, String> {
         let upload_path = self.upload_path.trim().trim_matches('/');
@@ -369,6 +382,7 @@ impl DsMallUiBuilder {
             upload,
             admin,
             embedded_statics: self.embedded_statics,
+            materialize_views: self.materialize_views,
         })
     }
 }
@@ -437,17 +451,43 @@ mod tests {
     }
 
     #[test]
-    fn materialize_defaults_is_idempotent() {
+    fn materialize_defaults_copies_no_views_by_default() {
+        // 默认**不复制**库视图：库模板就是引用库视图，复制会冻住版本并挡住升级。
         let root = std::env::temp_dir().join(format!("dsmallui-facade-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let ui = DsMallUi::builder()
             .web_root(root.join("wwwroot"))
-            .views_root(root.join("Views"))
+            .views_root(root.join("Areas"))
+            .csharp_areas(true)
+            .build()
+            .unwrap();
+        let written = ui.materialize_defaults().unwrap();
+        assert_eq!(written, 1, "只落地 ueconfig.json");
+        assert!(root.join("wwwroot/ueconfig.json").is_file());
+        assert!(!root.join("Areas/Admin/Views").exists(), "不应复制视图");
+        // 不落地也能渲染（走库内置模板）
+        let html = ui
+            .views()
+            .render("Admin", "Config", "Index", &serde_json::json!({}))
+            .unwrap();
+        assert!(html.contains("/static/admin/css/admin.css"), "{html}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn materialize_views_is_opt_in_and_idempotent() {
+        let root = std::env::temp_dir().join(format!("dsmallui-facade-copy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let ui = DsMallUi::builder()
+            .web_root(root.join("wwwroot"))
+            .views_root(root.join("Areas"))
+            .csharp_areas(true)
+            .materialize_views(true)
             .build()
             .unwrap();
         let first = ui.materialize_defaults().unwrap();
-        assert!(first >= 4, "至少写入 4 个默认视图 + 配置");
-        assert!(root.join("wwwroot/ueconfig.json").is_file());
+        assert!(first >= 4, "开启后应复制视图 + 配置");
+        assert!(root.join("Areas/Admin/Views/Shared/_AdminLayout.cshtml").is_file());
         let second = ui.materialize_defaults().unwrap();
         assert_eq!(second, 0, "二次落地必须全部跳过");
         let _ = std::fs::remove_dir_all(&root);
