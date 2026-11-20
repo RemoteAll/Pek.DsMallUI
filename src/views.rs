@@ -164,6 +164,21 @@ impl Views {
             .with_meta_ttl_ms(self.meta_ttl_ms)
     }
 
+    /// 清空视图/资源解析缓存（对齐 C# 后台「清除缓存」动作）。
+    ///
+    /// 只清内存里按 mtime/长度缓存的解析结果，不删文件、不落地模板。
+    pub fn clear_caches(&self) -> usize {
+        let mut cleared = 0;
+        if let Some(assets) = self.assets.as_ref() {
+            // 页面资源(按视图名找 css/js)的 mtime 缓存
+            assets.clear_cache();
+            cleared += 1;
+        }
+        // 视图解析缓存（约定路径 + 元素 ViewStart + mtime）
+        self.renderer().clear_resolve_cache();
+        cleared + 1
+    }
+
     /// 内置模板表：`相对名（不含 .cshtml）→ 源码`（由目录清单 + 约定推导）。
     ///
     /// 只含 `.cshtml` 模板（文本），**不含任何 css/js/图片等静态资源**。

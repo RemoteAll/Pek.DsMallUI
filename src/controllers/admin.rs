@@ -256,6 +256,17 @@ impl AdminArea {
                     render(&views, &area_name, "Home", "Main", &model)
                 }
             })
+            // 清空视图/资源解析缓存（骨架页右上角「清除缓存」→ 对齐 C# `Home/ClearCache`）
+            .get("clearcache", {
+                let views = views.clone();
+                let area_name = area_name.clone();
+                move |_ctx: &Ctx| {
+                    let cleared = views.clear_caches();
+                    let back = format!("{}/home/index", area::route_prefix(&area_name));
+                    dhrust::logs::info!("[DsMallUI] 已清理缓存：{cleared} 项（{area_name}）");
+                    prompt(&views, "缓存已清理", true, Some(&back))
+                }
+            })
             .mount(router);
 
         let backend = self.backend.clone();
@@ -410,6 +421,7 @@ fn home_model(
         "home": home_route(area_name),
         "mainUrl": format!("{route}/home/main"),
         "configUrl": format!("{route}/config/index"),
+        "clearCacheUrl": format!("{route}/home/clearcache"),
         "logoutUrl": resolve_url(logout_url, area_name),
         "copyright": format!("@ {display_name}"),
     })
