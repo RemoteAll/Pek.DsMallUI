@@ -136,6 +136,7 @@ impl AdminMenu {
                             "controller": controller,
                             "action": action,
                             "module": key,
+                            "leftId": format!("left_{}{}{}", key, controller, action),
                         })
                     })
                     .collect();

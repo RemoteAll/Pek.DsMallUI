@@ -209,12 +209,11 @@ impl AdminArea {
                         &logout_url,
                         Some(ctx),
                     );
-                    render(&views, &area_name, "Home", "Index", &model)
+                    render(&views, &area_name, "Home", "DashBoard", &model)
                 }
             })
             .get("main", {
-                // 与 `/home/index` 用**同一个视图**：C# 里这是 iframe 的工作区，
-                // 本移植版不自己造框架页，两者内容一致（`mainUrl` 仍可用）。
+                // iframe 内的首页内容（骨架页 `Home/DashBoard` 指向这里）
                 let backend = backend.clone();
                 let views = views.clone();
                 let area_name = area_name.clone();
@@ -232,7 +231,7 @@ impl AdminArea {
                         &logout_url,
                         Some(ctx),
                     );
-                    render(&views, &area_name, "Home", "Index", &model)
+                    render(&views, &area_name, "Home", "Main", &model)
                 }
             })
             .mount(router);
@@ -351,6 +350,8 @@ fn home_model(
         .to_string();
     let route = area::route_prefix(area_name);
     let (left_menus, has_left_menus) = left_menus(configured_menus, area_name);
+    // 后台骨架（对齐参考项目 `Home/DashBoard.cshtml`）：模块 + 叶子，controller/action 已预计算
+    let modules = AdminMenu::modules_to_value(&resolved_menus(configured_menus, area_name), area_name);
     let mut shortcuts = Vec::new();
     for menu in resolved_menus(configured_menus, area_name) {
         if menu.has_children() {
@@ -376,9 +377,11 @@ fn home_model(
         "hasMenus": has_menus,
         "leftMenus": left_menus,
         "hasLeftMenus": has_left_menus,
+        "modules": modules,
         "currentPath": current_path(ctx),
         "home": home_route(area_name),
         "mainUrl": format!("{route}/home/main"),
+        "configUrl": format!("{route}/config/index"),
         "logoutUrl": resolve_url(logout_url, area_name),
         "copyright": format!("@ {display_name}"),
     })

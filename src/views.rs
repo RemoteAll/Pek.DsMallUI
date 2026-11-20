@@ -421,17 +421,41 @@ mod tests {
     }
 
     #[test]
-    fn home_page_uses_admin_layout_without_selfmade_frame() {
-        // 首页只用 `_AdminLayout` + 内容；不再自己拼顶栏/左侧菜单（C# 里它们由框架包提供）
+    fn home_page_uses_reference_admin_skeleton() {
+        // 首页是框架页：逐段移植参考项目 `Home/DashBoard.cshtml`
+        // （`admincp-header` 顶栏 + `#mainMenu` 左栏 + `iframe#main-frame`）
         let dir = temp_dir("frame");
         let views = Views::areas(&dir);
         views.materialize("Admin").unwrap();
         let html = views
-            .render("Admin", "Home", "Index", &json!({ "displayName": "站点" }))
+            .render(
+                "Admin",
+                "Home",
+                "DashBoard",
+                &json!({
+                    "displayName": "站点",
+                    "userName": "admin",
+                    "areaRoute": "/admin",
+                    "mainUrl": "/admin/home/main",
+                    "configUrl": "/admin/config/index",
+                    "logoutUrl": "/admin/login/logout",
+                    "modules": [{
+                        "key": "content",
+                        "title": "内容管理",
+                        "icon": "layui-icon-template-1",
+                        "items": [
+                            { "title": "文章产品", "icon": "layui-icon-form", "controller": "content", "action": "articles", "module": "content", "leftId": "left_contentcontentarticles" }
+                        ]
+                    }]
+                }),
+            )
             .unwrap();
-        assert!(html.contains("/static/admin/css/admin.css"), "应套用 _AdminLayout");
-        assert!(!html.contains("layui-layout-admin"), "不应自造框架页：{html}");
-        assert!(!html.contains("cube-iframe"), "不应自造 iframe 框架：{html}");
+        assert!(html.contains("admincp-header"), "缺少顶栏骨架");
+        assert!(html.contains("admincp-container"), "缺少左右分栏骨架");
+        assert!(html.contains("id=\"main-frame\""), "缺少右侧 iframe");
+        assert!(html.contains("sort_content"), "缺少左栏分组");
+        assert!(html.contains("openItem('articles,content,content')"), "缺少左栏点击事件");
+        assert!(html.contains("/static/admin/css/admin.css"), "缺少 skin 样式");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -501,12 +525,12 @@ mod tests {
         let dir = temp_dir("home");
         materialize(&dir).unwrap();
         let views = Views::new(&dir);
-        // 首页只渲染内容（快照信息 + 快捷入口），布局由 `_ViewStart` 给 `_AdminLayout`
+        // iframe 内的内容页（`Home/Main`）：布局仍由 `_ViewStart` 给 `_AdminLayout`
         let html = views
             .render(
                 "Admin",
                 "Home",
-                "Index",
+                "Main",
                 &json!({
                     "areaName": "Biz",
                     "areaRoute": "/biz",
