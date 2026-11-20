@@ -1,4 +1,4 @@
-//! 后台 Area 控制器（对应 C# `Pek.DsMallUI/Areas/Admin`）。
+﻿//! 后台 Area 控制器（对应 C# `Pek.DsMallUI/Areas/Admin`）。
 //!
 //! **区域名可配置**（对齐 C# `DHSetting.Current.AdminArea` / `AdminArea.AreaName`）：
 //! 默认 `Admin`，消费方在装配时改成自己的区域名（如 `Biz`）即可：
@@ -21,6 +21,7 @@
 //! 路由与参数绑定完全复用 `dhrust::net::controller`；视图解析另加一层 Area 目录约定
 //! （见 [`crate::views`]，非默认区域自动回退 `Admin` 模板）。
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use dhrust::net::controller::{json_result, ActionResult, Controller};
@@ -57,6 +58,10 @@ pub struct AdminArea {
     upload_prefix: String,
     /// 登录页是否启用图形验证码（默认开启，对齐 C# `CaptChaUrl`）。
     captcha_enabled: bool,
+    /// 连续登录失败达到该次数才要求验证码（`0` = 始终要求）。
+    captcha_after_failures: u32,
+    /// 连续登录失败计数（成功即清零）。
+    login_failures: Arc<AtomicU32>,
     /// 登录成功后的扩展头（由消费方注入会话 Cookie 等）。
     login_hook: Option<LoginHook>,
     /// 左侧菜单（消费方可覆盖，默认只有本 crate 自己的页面）。
@@ -78,6 +83,8 @@ impl AdminArea {
             area,
             upload_prefix: "/upload".to_string(),
             captcha_enabled: true,
+            captcha_after_failures: 3,
+            login_failures: Arc::new(AtomicU32::new(0)),
             login_hook: None,
             menus: Vec::new(),
             logout_url: format!("{}/logout", area::route_prefix(area::DEFAULT_AREA)),
@@ -100,6 +107,12 @@ impl AdminArea {
     /// 开启/关闭登录验证码（默认开启；单元测试与脚本化登录可关闭）。
     pub fn with_captcha(mut self, enabled: bool) -> AdminArea {
         self.captcha_enabled = enabled;
+        self
+    }
+
+    /// 连续失败达到 `n` 次才要求验证码（`0` = 始终要求，与 C# 默认行为一致）。
+    pub fn with_captcha_after_failures(mut self, n: u32) -> AdminArea {
+        self.captcha_after_failures = n;
         self
     }
 
@@ -282,6 +295,8 @@ impl AdminArea {
         let area_name = self.area.clone();
         let home = self.home.clone();
         let captcha_enabled = self.captcha_enabled;
+        let captcha_after = self.captcha_after_failures;
+        let login_failures = self.login_failures.clone();
         let login_hook = self.login_hook.clone();
         Controller::new(&format!("{segment}/login"))
             .get("index", {
@@ -289,6 +304,7 @@ impl AdminArea {
                 let area_name = area_name.clone();
                 let display_name = display_name.clone();
                 let home = home.clone();
+                let login_failures = login_failures.clone();
                 move |ctx: &Ctx| {
                     let model = login_model(
                         &display_name,
@@ -296,7 +312,7 @@ impl AdminArea {
                         &home,
                         Some(ctx),
                         None,
-                        captcha_enabled,
+                        captcha_required(captcha_enabled, captcha_after, &login_failures),
                     );
                     render(&views, &area_name, "Login", "Index", &model)
                 }
@@ -308,6 +324,7 @@ impl AdminArea {
                 let display_name = display_name.clone();
                 let home = home.clone();
                 let login_hook = login_hook.clone();
+                let login_failures = login_failures.clone();
                 move |ctx: &Ctx| {
                     do_login(
                         &*backend,
@@ -316,6 +333,8 @@ impl AdminArea {
                         &display_name,
                         &home,
                         captcha_enabled,
+                        captcha_after,
+                        &login_failures,
                         login_hook.as_ref(),
                         ctx,
                     )
@@ -672,6 +691,24 @@ fn update_base(
     )
 }
 
+/// 当前是否需要验证码：关闭 → 否；`after == 0` → 始终要求；否则看连续失败次数。
+fn captcha_required(enabled: bool, after: u32, failures: &Arc<AtomicU32>) -> bool {
+    if !enabled {
+        return false;
+    }
+    if after == 0 {
+        return true;
+    }
+    failures.load(Ordering::Relaxed) >= after
+}
+
+/// 记一次登录失败（封顶，避免溢出）。
+fn bump_login_failures(failures: &Arc<AtomicU32>) {
+    let _ = failures.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+        Some(v.saturating_add(1).min(1_000))
+    });
+}
+
 /// 登录。
 fn do_login(
     backend: &dyn AdminBackend,
@@ -680,9 +717,13 @@ fn do_login(
     display_name: &str,
     home: &str,
     captcha_enabled: bool,
+    captcha_after: u32,
+    login_failures: &Arc<AtomicU32>,
     login_hook: Option<&LoginHook>,
     ctx: &Ctx,
 ) -> ActionResult {
+    // 连续失败达到阈值后强制要求验证码（默认 3 次）
+    let need_captcha = captcha_required(captcha_enabled, captcha_after, login_failures);
     let user_name = form_value_any(ctx, &["UserName", "username"])
         .trim()
         .to_string();
@@ -692,18 +733,21 @@ fn do_login(
         .to_string();
 
     // 验证码（与 C# 登录页同一位置）：先校验，避免无效登录打穿口令校验。
-    if captcha_enabled {
+    if need_captcha {
         let token = captcha::token_from_cookie(ctx.header("cookie"));
         let code = form_value_any(ctx, &["checkcode", "CheckCode", "captcha"]);
         if !captcha::check(&token, &code) {
             let message = "验证码不正确";
+            bump_login_failures(login_failures);
             dhrust::logs::warn!("[DsMallUI] 登录失败（{user_name}）：{message}");
-            return login_failure(views, area_name, display_name, home, captcha_enabled, ctx, message);
+            return login_failure(views, area_name, display_name, home, need_captcha, ctx, message);
         }
     }
 
     match backend.login(&user_name, &password) {
         Ok(user) => {
+            // 登录成功：清零失败计数，验证码恢复为「失败 N 次才出现」
+            login_failures.store(0, Ordering::Relaxed);
             // 消费方注入的扩展头（如会话 Cookie）。
             let extra_headers = login_hook.map(|hook| hook(&user)).unwrap_or_default();
             if is_ajax(ctx) {
@@ -735,8 +779,11 @@ fn do_login(
             ActionResult::Response(response)
         }
         Err(e) => {
+            bump_login_failures(login_failures);
+            // 本次失败可能刚好达到阈值：重渲染的页面就应带上验证码
+            let need_captcha = captcha_required(captcha_enabled, captcha_after, login_failures);
             dhrust::logs::warn!("[DsMallUI] 登录失败（{user_name}）：{e}");
-            login_failure(views, area_name, display_name, home, captcha_enabled, ctx, &e)
+            login_failure(views, area_name, display_name, home, need_captcha, ctx, &e)
         }
     }
 }
@@ -994,8 +1041,9 @@ mod tests {
         let home = home_route("Biz");
 
         let bad = ctx("POST", "/biz/login/login", "", "UserName=admin&Password=wrong");
+        let fails = Arc::new(AtomicU32::new(0));
         let (status, body) = body_of(do_login(
-            &backend, &views, "Biz", "后台", &home, false, None, &bad,
+            &backend, &views, "Biz", "后台", &home, false, 0, &fails, None, &bad,
         ));
         assert_eq!(status, 200);
         let text = crate::decode_html_entities(&body);
@@ -1008,9 +1056,24 @@ mod tests {
             "UserName=admin&Password=admin123",
         );
         let (status, body) = body_of(do_login(
-            &backend, &views, "Biz", "后台", &home, false, None, &ok,
+            &backend, &views, "Biz", "后台", &home, false, 0, &fails, None, &ok,
         ));
         assert_eq!(status, 302, "{body}");
+    }
+
+    #[test]
+    fn captcha_appears_only_after_n_failures() {
+        let f = Arc::new(AtomicU32::new(0));
+        assert!(!captcha_required(true, 3, &f), "初始不要求验证码");
+        bump_login_failures(&f);
+        bump_login_failures(&f);
+        assert!(!captcha_required(true, 3, &f), "失败 2 次仍不要求");
+        bump_login_failures(&f);
+        assert!(captcha_required(true, 3, &f), "第 3 次失败后要求验证码");
+        f.store(0, Ordering::Relaxed);
+        assert!(!captcha_required(true, 3, &f), "登录成功后恢复为不要求");
+        assert!(captcha_required(true, 0, &f), "after=0 表示始终要求");
+        assert!(!captcha_required(false, 3, &f), "关闭时不要求");
     }
 
     #[test]
@@ -1034,8 +1097,9 @@ mod tests {
             "",
             "UserName=admin&Password=admin123&checkcode=0000",
         );
+        let fails = Arc::new(AtomicU32::new(0));
         let (status, body) = body_of(do_login(
-            &backend, &views, "Biz", "后台", &home, true, None, &request,
+            &backend, &views, "Biz", "后台", &home, true, 0, &fails, None, &request,
         ));
         assert_eq!(status, 200);
         let text = crate::decode_html_entities(&body);
@@ -1059,6 +1123,7 @@ mod tests {
                 format!("sid={}", user.user_name),
             )]
         });
+        let fails = Arc::new(AtomicU32::new(0));
         match do_login(
             &backend,
             &views,
@@ -1066,6 +1131,8 @@ mod tests {
             "后台",
             &home,
             false,
+            0,
+            &fails,
             Some(&hook),
             &ok,
         ) {
