@@ -101,6 +101,8 @@ pub struct Views {
     layout: ViewLayout,
     /// 页面级静态资源约定（`None` = 不注入）。
     assets: Option<PageAssets>,
+    /// 显式登记的资源（对齐 C# `PekHtml.AddCssFileParts` / `AddScriptParts`）。
+    extra_assets: crate::assets::Assets,
     /// 解析缓存 TTL（毫秒；`0` = 改文件立即生效）。
     meta_ttl_ms: u64,
 }
@@ -112,6 +114,7 @@ impl Views {
             root: root.into(),
             layout: ViewLayout::Flat,
             assets: None,
+            extra_assets: crate::assets::Assets::new(),
             meta_ttl_ms: dhrust::net::controller::DEFAULT_META_TTL_MS,
         }
     }
@@ -122,6 +125,7 @@ impl Views {
             root: root.into(),
             layout: ViewLayout::Areas,
             assets: None,
+            extra_assets: crate::assets::Assets::new(),
             meta_ttl_ms: dhrust::net::controller::DEFAULT_META_TTL_MS,
         }
     }
@@ -129,6 +133,13 @@ impl Views {
     /// 启用页面级静态资源约定（`{视图}.css` / `{视图}.js` 自动注入，磁盘直读）。
     pub fn with_page_assets(mut self, assets: Option<PageAssets>) -> Views {
         self.assets = assets;
+        self
+    }
+
+    /// 显式登记页面资源（对齐 C# `PekHtml.AddCssFileParts` / `AddScriptParts`）；
+    /// 渲染时以 `Model.assets` 交给布局遍历输出标签。
+    pub fn with_extra_assets(mut self, assets: crate::assets::Assets) -> Views {
+        self.extra_assets = assets;
         self
     }
 
@@ -202,7 +213,11 @@ impl Views {
 
         // Razor 子集对「取不存在的属性」是硬错误（`RenderError`），所以内置模板用到的键
         // 必须先补齐默认值，宿主只传业务字段也不会渲染失败。
-        let model = with_template_defaults(model);
+        let mut model = with_template_defaults(model);
+        if let Some(map) = model.as_object_mut() {
+            // C# `PekHtml` 那套登记的资源，统一以 `assets` 交给布局 foreach 输出
+            map.insert("assets".into(), self.extra_assets.to_value());
+        }
         let full_controller = self.layout.controller(area_name, controller);
         self.renderer()
             .render(&full_controller, view, view, &model)
@@ -298,6 +313,10 @@ fn with_template_defaults(model: &Value) -> Value {
             base.entry(key).or_insert(value);
         }
     }
+    // `Model.assets`：布局里的资源清单（对齐 C# `PekHtml`），未登记时给空清单
+    base.entry("assets".to_string()).or_insert_with(|| {
+        crate::assets::Assets::new().to_value()
+    });
     for (key, value) in [
         ("title", json!("")),
         ("displayName", json!("")),
@@ -421,41 +440,19 @@ mod tests {
     }
 
     #[test]
-    fn home_page_uses_reference_admin_skeleton() {
-        // 首页是框架页：逐段移植参考项目 `Home/DashBoard.cshtml`
-        // （`admincp-header` 顶栏 + `#mainMenu` 左栏 + `iframe#main-frame`）
-        let dir = temp_dir("frame");
+    fn library_ships_only_csharp_skin_views() {
+        // 分层与 C# `Pek.DsMallUI` 一致：库只带 `Config` / `Login` / `_AdminLayout` 这类皮肤视图；
+        // `Home/*`（后台骨架与工作区）属于站点项目，不随库下发。
+        let dir = temp_dir("skin-curated");
         let views = Views::areas(&dir);
         views.materialize("Admin").unwrap();
-        let html = views
-            .render(
-                "Admin",
-                "Home",
-                "DashBoard",
-                &json!({
-                    "displayName": "站点",
-                    "userName": "admin",
-                    "areaRoute": "/admin",
-                    "mainUrl": "/admin/home/main",
-                    "configUrl": "/admin/config/index",
-                    "logoutUrl": "/admin/login/logout",
-                    "modules": [{
-                        "key": "content",
-                        "title": "内容管理",
-                        "icon": "layui-icon-template-1",
-                        "items": [
-                            { "title": "文章产品", "icon": "layui-icon-form", "controller": "content", "action": "articles", "module": "content", "leftId": "left_contentcontentarticles" }
-                        ]
-                    }]
-                }),
-            )
-            .unwrap();
-        assert!(html.contains("admincp-header"), "缺少顶栏骨架");
-        assert!(html.contains("admincp-container"), "缺少左右分栏骨架");
-        assert!(html.contains("id=\"main-frame\""), "缺少右侧 iframe");
-        assert!(html.contains("sort_content"), "缺少左栏分组");
-        assert!(html.contains("openItem('articles,content,content')"), "缺少左栏点击事件");
-        assert!(html.contains("/static/admin/css/admin.css"), "缺少 skin 样式");
+        assert!(dir.join("Admin/Views/Config/Index.cshtml").is_file());
+        assert!(dir.join("Admin/Views/Login/Index.cshtml").is_file());
+        assert!(dir.join("Admin/Views/Shared/_AdminLayout.cshtml").is_file());
+        assert!(
+            !dir.join("Admin/Views/Home/DashBoard.cshtml").exists(),
+            "Home 视图应由项目提供，库不应下发"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -521,23 +518,23 @@ mod tests {
     }
 
     #[test]
-    fn renders_home_page() {
+    fn project_provided_home_views_use_admin_layout() {
+        // `Home/*` 由项目提供（库不下发）；写了项目视图后应能正常套 `_AdminLayout`
         let dir = temp_dir("home");
         materialize(&dir).unwrap();
+        std::fs::create_dir_all(dir.join("Admin/Home")).unwrap();
+        std::fs::write(
+            dir.join("Admin/Home/Main.cshtml"),
+            "<a href=\"/biz/config/index\">站点设置</a>",
+        )
+        .unwrap();
         let views = Views::new(&dir);
-        // iframe 内的内容页（`Home/Main`）：布局仍由 `_ViewStart` 给 `_AdminLayout`
         let html = views
             .render(
                 "Admin",
                 "Home",
                 "Main",
-                &json!({
-                    "areaName": "Biz",
-                    "areaRoute": "/biz",
-                    "mainUrl": "/biz/home/main",
-                    "menus": [{ "name": "站点设置", "url": "/biz/config/index", "desc": "设置" }],
-                    "hasMenus": true
-                }),
+                &json!({ "displayName": "站点" }),
             )
             .unwrap();
         let text = crate::decode_html_entities(&html);

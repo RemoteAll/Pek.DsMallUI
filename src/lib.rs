@@ -71,6 +71,7 @@
 //! - 控制器/视图/静态资源/日志/口令/出网客户端一律用 `dhrust` 既有能力，未另起炉灶。
 
 pub mod area;
+pub mod assets;
 pub mod backend;
 pub mod captcha;
 pub mod controllers;

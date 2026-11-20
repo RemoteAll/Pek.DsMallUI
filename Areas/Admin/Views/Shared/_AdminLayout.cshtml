@@ -1,4 +1,4 @@
-@* 内容页布局（对齐 C# `Areas/Admin/Views/Shared/_AdminLayout.cshtml`）：iframe 内的页面壳。 *@
+﻿@* 内容页布局（对齐 C# `Areas/Admin/Views/Shared/_AdminLayout.cshtml`）：iframe 内的页面壳。 *@
 <!DOCTYPE html>
 <html>
 <head>
@@ -21,7 +21,8 @@
     <script src="/static/plugins/js/xm-select/xm-select.js"></script>
     <script src="/static/plugins/js/crypto/crypto.js"></script>
     <link rel="stylesheet" href="/static/plugins/js/layui/css/layui.css">
-
+    @foreach (var href in Model.assets.css) { <link rel="stylesheet" href="@href"> }
+    @foreach (var src in Model.assets.headScripts) { <script src="@src"></script> }
     <script type="text/javascript">
         var HOMESITEURL = "/";
         var BASESITEURL = "/";
@@ -44,6 +45,8 @@
     <div id="ajaxwaitid"></div>
 
     @RenderBody()
+
+    @foreach (var src in Model.assets.footerScripts) { <script src="@src"></script> }
 
     @await RenderSectionAsync("Scripts", false)
 </body>

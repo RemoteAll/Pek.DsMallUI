@@ -63,6 +63,8 @@ pub struct AdminArea {
     menus: Vec<AdminMenu>,
     /// 退出登录地址（默认 `/{area}/logout`，由宿主提供路由）。
     logout_url: String,
+    /// 页面资源清单（对齐 C# `PekHtml`：css / head / footer，按 URL 去重且保序）。
+    assets: crate::assets::Assets,
 }
 
 impl AdminArea {
@@ -79,7 +81,14 @@ impl AdminArea {
             login_hook: None,
             menus: Vec::new(),
             logout_url: format!("{}/logout", area::route_prefix(area::DEFAULT_AREA)),
+            assets: crate::assets::Assets::new(),
         }
+    }
+
+    /// 登记后台页面资源（对齐 C# `PekHtml.AddCssFileParts` / `AddScriptParts`）。
+    pub fn with_assets(mut self, assets: crate::assets::Assets) -> AdminArea {
+        self.assets = assets;
+        self
     }
 
     /// 设置登录成功钩子（返回追加到响应的头，如 `Set-Cookie`）。
@@ -801,6 +810,21 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         materialize_for(&dir, area_name).unwrap();
+        // `Home/*` 属于站点项目（库不下发），测试里按项目角色补上（三种约定目录都写，兼容 Flat/Areas）
+        for rel in [
+            format!("{area_name}/Views/Home"),
+            format!("{area_name}/Home"),
+            format!("Areas/{area_name}/Views/Home"),
+        ] {
+            let home = dir.join(rel);
+            std::fs::create_dir_all(&home).unwrap();
+            std::fs::write(
+                home.join("DashBoard.cshtml"),
+                "<p>DASHBOARD @Model.displayName</p>\n@if (Model.hasMenus) { @foreach (var m in Model.menus) { <a href=\"@m.url\">@m.name</a> } }",
+            )
+            .unwrap();
+            std::fs::write(home.join("Main.cshtml"), "<p>MAIN @Model.displayName</p>").unwrap();
+        }
         dir
     }
 
