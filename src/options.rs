@@ -163,6 +163,8 @@ pub struct DsMallUiBuilder {
     meta_ttl_ms: u64,
     /// 后台左侧菜单。
     menus: Vec<crate::menu::AdminMenu>,
+    /// 菜单动态来源（优先于 `menus`；每次请求重新取，后台改菜单后无需重启）。
+    menu_provider: Option<crate::menu::MenuProvider>,
     /// 退出登录地址。
     logout_url: String,
     /// 登录验证码（默认开启；脚本化登录/内网环境可关）。
@@ -189,6 +191,7 @@ impl Default for DsMallUiBuilder {
             page_assets_prefix: DEFAULT_PAGE_ASSETS_PREFIX.to_string(),
             meta_ttl_ms: dhrust::net::controller::DEFAULT_META_TTL_MS,
             menus: Vec::new(),
+            menu_provider: None,
             logout_url: String::new(),
             captcha: true,
             page_assets_ttl: 30,
@@ -244,6 +247,15 @@ impl DsMallUiBuilder {
     /// 菜单 `url` 可写 `{area}` 占位符，会按实际区域路由前缀替换。
     pub fn menus(mut self, menus: Vec<crate::menu::AdminMenu>) -> Self {
         self.menus = menus;
+        self
+    }
+
+    /// 动态菜单来源（优先于 [`DsMallUiBuilder::menus`]）。
+    ///
+    /// 每次渲染骨架页（`Home/DashBoard`、`Home/Main`）与设置页时调用一次，
+    /// 适合菜单存在数据库、后台维护后立即生效的场景。
+    pub fn menu_provider(mut self, provider: crate::menu::MenuProvider) -> Self {
+        self.menu_provider = Some(provider);
         self
     }
 
@@ -369,6 +381,9 @@ impl DsMallUiBuilder {
         }
         if !self.menus.is_empty() {
             admin = admin.with_menus(self.menus);
+        }
+        if let Some(provider) = self.menu_provider {
+            admin = admin.with_menu_provider(provider);
         }
         if !self.logout_url.trim().is_empty() {
             admin = admin.with_logout_url(self.logout_url);

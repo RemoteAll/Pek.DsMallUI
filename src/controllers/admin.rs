@@ -231,9 +231,10 @@ impl AdminArea {
                 let area_name = area_name.clone();
                 let display_name = display_name.clone();
                 let upload_prefix = upload_prefix.clone();
-                let menus = menu_provider();
+                let provider = menu_provider.clone();
                 let logout_url = logout_url.clone();
                 move |ctx: &Ctx| {
+                    let menus = provider();
                     let model = home_model(
                         &*backend,
                         &display_name,
@@ -253,9 +254,10 @@ impl AdminArea {
                 let area_name = area_name.clone();
                 let display_name = display_name.clone();
                 let upload_prefix = upload_prefix.clone();
-                let menus = menu_provider();
+                let provider = menu_provider.clone();
                 let logout_url = logout_url.clone();
                 move |ctx: &Ctx| {
+                    let menus = provider();
                     let model = home_model(
                         &*backend,
                         &display_name,
@@ -290,9 +292,10 @@ impl AdminArea {
                 let views = views.clone();
                 let area_name = area_name.clone();
                 let display_name = display_name.clone();
-                let menus = menu_provider();
+                let provider = menu_provider.clone();
                 let logout_url = logout_url.clone();
                 move |ctx: &Ctx| {
+                    let menus = provider();
                     let model = config_model(
                         &*backend,
                         &display_name,
@@ -369,11 +372,15 @@ impl AdminArea {
     /// 组装设置页模型（控制器与测试共用）。
     pub fn page_model(&self, saved: bool) -> Value {
         let display_name = self.backend.display_name();
+        let menus = match &self.menu_provider {
+            Some(provider) => provider(),
+            None => self.menus.clone(),
+        };
         config_model(
             &*self.backend,
             &display_name,
             &self.area,
-            &self.menus,
+            &menus,
             &self.logout_url,
             None,
             saved,
