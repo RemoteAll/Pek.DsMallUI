@@ -7,6 +7,7 @@
     <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" name="viewport">
     <link rel="stylesheet" href="/static/admin/css/admin.css">
     <link rel="stylesheet" href="/static/plugins/js/jqueryui/jquery_ui.min.css">
+    <link rel="stylesheet" href="/static/plugins/js/layui/css/layui.css">
     <script src="/static/plugins/jquery214.min.js"></script>
     <script src="/static/plugins/jquery.validate.min.js"></script>
     <script src="/static/plugins/jquery.cookie.js"></script>
@@ -19,33 +20,91 @@
     <script src="/static/plugins/js/layui/layui.all.js"></script>
     <script src="/static/plugins/js/xm-select/xm-select.js"></script>
     <script src="/static/plugins/js/crypto/crypto.js"></script>
-    <link rel="stylesheet" href="/static/plugins/js/layui/css/layui.css">
 
     <script type="text/javascript">
-        var HOMESITEURL = "@Model.curDomainUrl";
         var ADMINSITEURL = "@Model.areaRoute";
         var ADMINSITEROOT = "/static/admin";
-        var BASESITEURL = "@Model.curDomainUrl";
         /** 计算 hash（与 C# `_AdminLayout` 同口径） */
         function generateHash(str) {
             const pwdStr = str.match(/password=([^&]+)/);
             const hash = 'password=' + CryptoJS.MD5(pwdStr[1]).toString();
-            const newStr = str.replace(/password=([^&]+)/, hash.toUpperCase());
-            return newStr;
+            return str.replace(/password=([^&]+)/, hash.toUpperCase());
         }
         function generateHash2(str) {
-            const hash = CryptoJS.MD5(str).toString().toUpperCase();
-            return hash;
+            return CryptoJS.MD5(str).toString().toUpperCase();
         }
     </script>
+    <style>
+        .cube-frame-body { position: absolute; left: 200px; right: 0; top: 60px; bottom: 44px; overflow: auto; background: #f2f2f2; }
+        .cube-frame-inner { padding: 12px 16px; }
+        .cube-logo { color: #fff; font-size: 16px; font-weight: 600; }
+    </style>
     @await RenderSectionAsync("Head", false)
 </head>
-<body>
+<body class="layui-layout-body">
     <div id="append_parent"></div>
     <div id="ajaxwaitid"></div>
 
-    @RenderBody()
+    <div class="layui-layout layui-layout-admin">
+        <div class="layui-header">
+            <div class="layui-logo cube-logo">@Model.displayName</div>
+            <ul class="layui-nav layui-layout-right">
+                <li class="layui-nav-item"><a href="@Model.home">后台首页</a></li>
+                <li class="layui-nav-item">
+                    <a href="javascript:;">@Model.userName</a>
+                    <dl class="layui-nav-child">
+                        <dd><a href="@Model.logoutUrl">退出登录</a></dd>
+                    </dl>
+                </li>
+            </ul>
+        </div>
 
+        <div class="layui-side layui-bg-black">
+            <div class="layui-side-scroll">
+                <ul class="layui-nav layui-nav-tree" lay-filter="cube-leftmenu">
+                    @foreach (var menu in Model.leftMenus) {
+                    @if (menu.hasChildren) {
+                    <li class="layui-nav-item layui-nav-itemed">
+                        <a href="javascript:;"><i class="@menu.icon"></i><span>@menu.title</span></a>
+                        <dl class="layui-nav-child">
+                            @foreach (var child in menu.children) {
+                            <dd><a href="@child.url" data-title="@child.title">@child.title</a></dd>
+                            }
+                        </dl>
+                    </li>
+                    } else {
+                    <li class="layui-nav-item">
+                        <a href="@menu.url" data-title="@menu.title"><i class="@menu.icon"></i><span>@menu.title</span></a>
+                    </li>
+                    }
+                    }
+                </ul>
+            </div>
+        </div>
+
+        <div class="cube-frame-body">
+            <div class="cube-frame-inner">
+                @RenderBody()
+            </div>
+        </div>
+
+        <div class="layui-footer">@Model.copyright</div>
+    </div>
+
+    <script>
+        layui.use(['element'], function () {
+            var element = layui.element;
+            // 按当前地址高亮左侧菜单（服务端不参与判断，页页复用）
+            var path = (location.pathname || '').toLowerCase().replace(/\/$/, '');
+            var links = document.querySelectorAll('.layui-nav-tree a[href]');
+            for (var i = 0; i < links.length; i++) {
+                var href = (links[i].getAttribute('href') || '').toLowerCase().replace(/\/$/, '');
+                if (href && href.charAt(0) === '/' && href === path) {
+                    links[i].parentNode.classList.add('layui-this');
+                }
+            }
+        });
+    </script>
     @await RenderSectionAsync("Scripts", false)
 </body>
 </html>

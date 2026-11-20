@@ -40,6 +40,8 @@ use crate::ueditor::{UeditorConfig, UeditorService};
 use crate::views::Views;
 /// 默认上传目录名（C# `UploadPath` 默认值同为 `upload`）。
 pub const DEFAULT_UPLOAD_PATH: &str = "upload";
+/// 默认页面级资源 URL 前缀（物理目录 = `<web_root>/static/views`）。
+pub const DEFAULT_PAGE_ASSETS_PREFIX: &str = "/static/views";
 /// 默认后台区域名（与 C# `AdminArea.AreaName` 默认值一致：`Admin`）。
 pub const DEFAULT_ADMIN_AREA: &str = crate::area::DEFAULT_AREA;
 /// 默认请求体上限（与 `dhrust::net::http::DEFAULT_MAX_BODY_SIZE` 一致）。
@@ -151,6 +153,18 @@ pub struct DsMallUiBuilder {
     embedded_statics: Vec<(&'static str, &'static [u8])>,
     login_hook: Option<LoginHook>,
     csharp_areas: bool,
+    /// 页面级静态资源 URL 前缀（默认 `/static/views`；空串 = 关闭）。
+    page_assets_prefix: String,
+    /// 视图解析缓存 TTL（毫秒；`0` = 改文件立即生效）。
+    meta_ttl_ms: u64,
+    /// 后台左侧菜单。
+    menus: Vec<crate::menu::AdminMenu>,
+    /// 退出登录地址。
+    logout_url: String,
+    /// 登录验证码（默认开启；脚本化登录/内网环境可关）。
+    captcha: bool,
+    /// 页面资源解析缓存 TTL（秒）。
+    page_assets_ttl: u64,
 }
 
 impl Default for DsMallUiBuilder {
@@ -166,6 +180,12 @@ impl Default for DsMallUiBuilder {
             embedded_statics: Vec::new(),
             login_hook: None,
             csharp_areas: false,
+            page_assets_prefix: DEFAULT_PAGE_ASSETS_PREFIX.to_string(),
+            meta_ttl_ms: dhrust::net::controller::DEFAULT_META_TTL_MS,
+            menus: Vec::new(),
+            logout_url: String::new(),
+            captcha: true,
+            page_assets_ttl: 30,
         }
     }
 }
@@ -212,11 +232,52 @@ impl DsMallUiBuilder {
         self
     }
 
+    /// 后台左侧菜单（消费方追加自己的功能页；不设则用库内置默认菜单）。
+    ///
+    /// 菜单 `url` 可写 `{area}` 占位符，会按实际区域路由前缀替换。
+    pub fn menus(mut self, menus: Vec<crate::menu::AdminMenu>) -> Self {
+        self.menus = menus;
+        self
+    }
+
+    /// 退出登录地址（默认 `/{area}/logout`，宿主需提供该路由）。
+    pub fn logout_url(mut self, url: impl Into<String>) -> Self {
+        self.logout_url = url.into();
+        self
+    }
+
+    /// 登录验证码开关（默认开启；脚本化登录 / 纯内网环境可关）。
+    pub fn captcha(mut self, enabled: bool) -> Self {
+        self.captcha = enabled;
+        self
+    }
+
     /// 使用 C# Areas 目录规范：`Areas/{Area}/Views/{Controller}/{Action}.cshtml`。
     ///
     /// 默认关闭（保持旧的 `Views/{Area}/...` 布局）；开启后 `views_root` 应指向 `Areas`。
     pub fn csharp_areas(mut self, enabled: bool) -> Self {
         self.csharp_areas = enabled;
+        self
+    }
+
+    /// 页面级静态资源 URL 前缀（默认 [`DEFAULT_PAGE_ASSETS_PREFIX`]；空串 = 关闭）。
+    ///
+    /// 资源物理位置固定为 `<web_root>/<prefix>`，与视图同名同路径
+    /// （如 `wwwroot/static/views/Admin/Views/Config/Index.js`）—— **只从磁盘读，不入包**。
+    pub fn page_assets_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.page_assets_prefix = prefix.into();
+        self
+    }
+
+    /// 页面资源存在性解析缓存 TTL（秒；默认 30；调测期可设 `0`/`2` 让新增文件立刻生效）。
+    pub fn page_assets_ttl(mut self, seconds: u64) -> Self {
+        self.page_assets_ttl = seconds;
+        self
+    }
+
+    /// 视图解析缓存 TTL（毫秒；默认 1000；调测期可传 `0` = 保存即生效）。
+    pub fn meta_ttl_ms(mut self, ms: u64) -> Self {
+        self.meta_ttl_ms = ms;
         self
     }
 
@@ -270,12 +331,34 @@ impl DsMallUiBuilder {
         } else {
             Views::new(self.views_root)
         };
+        // 页面级资源：默认开启，磁盘直读（不存在同名文件就不注入）
+        let prefix = self.page_assets_prefix.trim().trim_end_matches('/');
+        let assets = if prefix.is_empty() {
+            None
+        } else {
+            let dir = prefix.trim_start_matches('/');
+            Some(dhrust::net::controller::PageAssets::new(
+                self.web_root.join(dir),
+                format!("/{dir}"),
+            )
+            .with_cache_ttl(self.page_assets_ttl))
+        };
+        let views = views
+            .with_page_assets(assets)
+            .with_meta_ttl_ms(self.meta_ttl_ms);
         let upload = UploadController::new(service, upload_root.clone());
         let mut admin = AdminArea::new(self.backend, views.clone())
             .with_area_name(&self.admin_area)?
-            .with_upload_prefix(&upload_prefix);
+            .with_upload_prefix(&upload_prefix)
+            .with_captcha(self.captcha);
         if let Some(hook) = self.login_hook {
             admin = admin.with_login_hook(hook);
+        }
+        if !self.menus.is_empty() {
+            admin = admin.with_menus(self.menus);
+        }
+        if !self.logout_url.trim().is_empty() {
+            admin = admin.with_logout_url(self.logout_url);
         }
 
         Ok(DsMallUi {

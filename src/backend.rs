@@ -9,6 +9,12 @@ use std::sync::Mutex;
 
 use serde_json::{json, Map, Value};
 
+/// 后台口令算法（与 C# `SaltPasswordProvider` 的 `md5+sha1` 档字节级互通）。
+///
+/// 该档同时接受「明文」与「前端算好的 32 位 MD5 十六进制」两种输入
+/// （见 `dhrust::sign::password`），因此前端可以只传 MD5。
+pub const PASSWORD_ALGORITHM: &str = "md5+sha1";
+
 /// 登录成功后的用户信息（字段与 C# `IManage` 常用面保持一致）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdminUser {
@@ -205,7 +211,7 @@ impl MemoryBackend {
         display_name: &str,
         is_admin: bool,
     ) -> &Self {
-        let stored = dhrust::sign::password::PasswordProvider::with_algorithm("md5+sha1")
+        let stored = dhrust::sign::password::PasswordProvider::with_algorithm(PASSWORD_ALGORITHM)
             .expect("md5+sha1 是受支持的口令算法")
             .hash(password);
         let mut state = self.state.lock().expect("MemoryBackend 锁中毒");
@@ -240,6 +246,17 @@ impl MemoryBackend {
         }
         drop(state);
         self
+    }
+
+    /// 测试专用：读取已存口令散列（验证存储算法）。
+    #[cfg(test)]
+    pub(crate) fn stored_hash(&self, user_name: &str) -> Option<String> {
+        let state = self.state.lock().expect("MemoryBackend 锁中毒");
+        state
+            .users
+            .iter()
+            .find(|u| u.user_name.eq_ignore_ascii_case(user_name))
+            .map(|u| u.password.clone())
     }
 }
 
@@ -294,7 +311,8 @@ impl AdminBackend for MemoryBackend {
             // 不区分「用户不存在」与「密码错误」，避免用户名枚举
             return Err("用户名或密码不正确".to_string());
         };
-        let (ok, upgraded) = dhrust::sign::password::verify_and_upgrade(password, &user.password);
+        let (ok, upgraded) =
+            dhrust::sign::password::verify_and_upgrade_with(PASSWORD_ALGORITHM, password, &user.password);
         if !ok {
             return Err("用户名或密码不正确".to_string());
         }
@@ -322,6 +340,22 @@ impl AdminBackend for MemoryBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn password_is_md5_sha1_and_accepts_frontend_md5() {
+        let backend = MemoryBackend::new();
+        let stored = backend.stored_hash("admin").expect("默认账号已存在");
+        assert!(
+            stored.starts_with("$md5+sha1$"),
+            "口令必须按 md5+sha1 存储，实际：{stored}"
+        );
+        // 前端 MD5（大写）直接登录
+        let md5 = dhrust::sign::md5_hex("admin123").to_ascii_uppercase();
+        let user = backend.login("admin", &md5).expect("前端 MD5 应可登录");
+        assert_eq!(user.user_name, "admin");
+        // 明文同样可登录（迁移期双接受）
+        assert!(backend.login("admin", "admin123").is_ok());
+    }
 
     #[test]
     fn default_settings_has_template_keys() {

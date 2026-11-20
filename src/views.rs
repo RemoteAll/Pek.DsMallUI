@@ -1,45 +1,135 @@
-//! 视图约定：`Views/{Area}/{Controller}/{Action}.cshtml`（Razor 子集，双端可渲染）。
+//! 视图约定：`Areas/{Area}/Views/{Controller}/{Action}.cshtml`（Razor 子集，双端可渲染）。
 //!
-//! `dhrust::net::controller::ViewRenderer` 的约定是 `Views/{Controller}/{Action}.cshtml`，
-//! 本 crate 在此之上补一层 **Area**（对齐 ASP.NET Core Areas：`/biz/config/index` →
-//! `Views/Biz/Config/Index.cshtml`）。控制器前缀本身由 `dhrust` 的
-//! [`Controller`](dhrust::net::controller::Controller) 提供，这里只负责视图解析与默认视图落地。
+//! 本 crate 在 `dhrust` 的 [`ViewRenderer`] 之上只做三件事：
+//! 1. **Area 视图位置**由 [`ViewLayout`]（= `dhrust::net::controller::ViewConvention`）统一给出，
+//!    查找顺序、项目覆盖库、`Shared` 回退、`_ViewStart` 约定布局全部复用 `dhrust`；
+//! 2. **默认视图表**（[`DEFAULT_VIEWS`]）以 `(区域, 控制器, 视图, 源码)` 的**数据**形式声明，
+//!    路径一律经约定推导，不在这里写死字符串路径；
+//! 3. **页面级静态资源**（`{视图}.css` / `{视图}.js`）只登记磁盘目录与前缀，
+//!    由 `dhrust` 按约定注入 —— **不读内容、不嵌入二进制**。
 //!
-//! **区域可配置**（默认 `Admin`，见 [`crate::area`]）：`Views/{Area}/…` 不存在时
-//! 自动回退 `Views/Admin/…`，因此改区域名（如 `Biz`）不必复制默认视图；
-//! 需要定制时再在 `Views/Biz/…` 放同名文件覆盖即可（对齐 NCube「子项目视图重写父项目视图」）。
+//! 目录约定（`Areas`）：
+//! ```text
+//! Areas/Admin/Views/_ViewStart.cshtml      ← 区域默认布局（约定，非写死）
+//! Areas/Admin/Views/Shared/_Layout.cshtml  ← 布局（项目可覆盖库同名文件）
+//! Areas/Admin/Views/Config/Index.cshtml    ← 内容页（无需写 Layout）
+//! ```
 //!
 //! 视图引擎是 **Razor 子集**（见 DH.RustBase `Doc/Razor子集模板引擎架构.md` §3.2）：
 //! 支持 `@expr`、`@if`、`@foreach`、`@{ var x = ... }`、`Layout`/`RenderBody`/`section`/
 //! `Html.PartialAsync`；不支持 `@using`/`@inject`/`@helper`/自由方法调用。
-//! 默认视图随 crate 内置，可用 [`materialize`] / [`materialize_for`] 落地后由项目覆盖。
 
 use std::path::{Path, PathBuf};
 
-use dhrust::net::controller::ViewRenderer;
+use dhrust::net::controller::{PageAssets, ViewRenderer};
 use serde_json::{json, Map, Value};
 
 use crate::area;
 
-/// 内置默认视图（相对视图根的规范路径 → 模板源码）。
-///
-/// **规范位置固定在 `Admin`**（与 C# `Areas/Admin/Views` 对齐）；其它区域名通过
-/// [`materialize_for`] 复制或直接走回退解析。
-pub const DEFAULT_VIEWS: &[(&str, &str)] = &[
-    ("Shared/_Layout.cshtml", include_str!("../Views/Shared/_Layout.cshtml")),
-    ("Shared/Prompt.cshtml", include_str!("../Views/Shared/Prompt.cshtml")),
-    (
-        "Admin/Home/Index.cshtml",
-        include_str!("../Views/Admin/Home/Index.cshtml"),
-    ),
-    (
-        "Admin/Config/Index.cshtml",
-        include_str!("../Views/Admin/Config/Index.cshtml"),
-    ),
-    (
-        "Admin/Login/Index.cshtml",
-        include_str!("../Views/Admin/Login/Index.cshtml"),
-    ),
+/// 默认视图的声明方式（决定它落在约定里的哪个目录）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefaultKind {
+    /// 控制器视图：`{Controller}/{View}`（`Config/Index`）。
+    View,
+    /// 共享视图：`Shared/{Name}`（`_Layout` / `Prompt`）。
+    Shared,
+    /// 区域根：`{Area}/Views/{Name}`（`_ViewStart`）。
+    AreaRoot,
+}
+
+/// 一个内置默认视图（库自带的「引用库视图」）。
+#[derive(Debug, Clone, Copy)]
+pub struct DefaultView {
+    /// 归属区域（规范位置 `Admin`，对齐 C# `Areas/Admin`）。
+    pub area: &'static str,
+    /// 声明方式。
+    pub kind: DefaultKind,
+    /// 控制器名（`kind = View` 时使用；其它情况留空）。
+    pub controller: &'static str,
+    /// 视图 / 共享视图 / 区域根文件名（不含 `.cshtml`）。
+    pub name: &'static str,
+    /// 模板源码。
+    pub source: &'static str,
+}
+
+impl DefaultView {
+    /// 该视图相对视图根的路径（含 `.cshtml`）。
+    pub fn path(&self, layout: ViewLayout, area_name: &str) -> String {
+        let area_name = if area_name.trim().is_empty() {
+            self.area
+        } else {
+            area_name
+        };
+        match self.kind {
+            DefaultKind::View => layout.view_path(area_name, self.controller, self.name),
+            DefaultKind::Shared => layout.shared_path(area_name, self.name),
+            DefaultKind::AreaRoot => layout.area_root_path(area_name, self.name),
+        }
+    }
+
+    /// 该视图相对视图根的相对名（不含 `.cshtml`，供内置模板查找）。
+    pub fn relative_name(&self, layout: ViewLayout) -> String {
+        self.path(layout, self.area)
+            .trim_end_matches(".cshtml")
+            .to_string()
+    }
+}
+
+/// 内置默认视图表（库自带；项目同名文件优先，未覆盖时用这里的模板）。
+pub const DEFAULT_VIEWS: &[DefaultView] = &[
+    // 区域约定布局（C# `_ViewStart.cshtml` 同口径）：所有页面默认套 `_Layout`。
+    DefaultView {
+        area: "Admin",
+        kind: DefaultKind::AreaRoot,
+        controller: "",
+        name: "_ViewStart",
+        source: include_str!("../Views/_ViewStart.cshtml"),
+    },
+    // 登录页是独立整页，用就近的 `_ViewStart` 关掉布局（C# 里就是 `Layout = null`）。
+    DefaultView {
+        area: "Admin",
+        kind: DefaultKind::View,
+        controller: "Login",
+        name: "_ViewStart",
+        source: include_str!("../Views/Admin/Login/_ViewStart.cshtml"),
+    },
+    // 布局与共享视图
+    DefaultView {
+        area: "Admin",
+        kind: DefaultKind::Shared,
+        controller: "",
+        name: "_Layout",
+        source: include_str!("../Views/Shared/_Layout.cshtml"),
+    },
+    DefaultView {
+        area: "Admin",
+        kind: DefaultKind::Shared,
+        controller: "",
+        name: "Prompt",
+        source: include_str!("../Views/Shared/Prompt.cshtml"),
+    },
+    // 页面
+    DefaultView {
+        area: "Admin",
+        kind: DefaultKind::View,
+        controller: "Home",
+        name: "Index",
+        source: include_str!("../Views/Admin/Home/Index.cshtml"),
+    },
+    DefaultView {
+        area: "Admin",
+        kind: DefaultKind::View,
+        controller: "Config",
+        name: "Index",
+        source: include_str!("../Views/Admin/Config/Index.cshtml"),
+    },
+    DefaultView {
+        area: "Admin",
+        kind: DefaultKind::View,
+        controller: "Login",
+        name: "Index",
+        source: include_str!("../Views/Admin/Login/Index.cshtml"),
+    },
 ];
 
 pub use dhrust::net::controller::ViewConvention as ViewLayout;
@@ -49,6 +139,10 @@ pub use dhrust::net::controller::ViewConvention as ViewLayout;
 pub struct Views {
     root: PathBuf,
     layout: ViewLayout,
+    /// 页面级静态资源约定（`None` = 不注入）。
+    assets: Option<PageAssets>,
+    /// 解析缓存 TTL（毫秒；`0` = 改文件立即生效）。
+    meta_ttl_ms: u64,
 }
 
 impl Views {
@@ -57,6 +151,8 @@ impl Views {
         Views {
             root: root.into(),
             layout: ViewLayout::Flat,
+            assets: None,
+            meta_ttl_ms: dhrust::net::controller::DEFAULT_META_TTL_MS,
         }
     }
 
@@ -65,7 +161,46 @@ impl Views {
         Views {
             root: root.into(),
             layout: ViewLayout::Areas,
+            assets: None,
+            meta_ttl_ms: dhrust::net::controller::DEFAULT_META_TTL_MS,
         }
+    }
+
+    /// 启用页面级静态资源约定（`{视图}.css` / `{视图}.js` 自动注入，磁盘直读）。
+    pub fn with_page_assets(mut self, assets: Option<PageAssets>) -> Views {
+        self.assets = assets;
+        self
+    }
+
+    /// 设置解析缓存 TTL（毫秒；调测期传 `0` = 保存即生效）。
+    pub fn with_meta_ttl_ms(mut self, ms: u64) -> Views {
+        self.meta_ttl_ms = ms;
+        self
+    }
+
+    /// 当前页面资源约定。
+    pub fn page_assets(&self) -> Option<&PageAssets> {
+        self.assets.as_ref()
+    }
+
+    /// 构造渲染器：约定 + 回退区域 + 内置模板 + 页面资源。
+    fn renderer(&self) -> ViewRenderer {
+        ViewRenderer::with_root(&self.root)
+            .with_convention(self.layout)
+            .with_fallback_area(area::DEFAULT_AREA)
+            .with_embedded_views(self.embedded_views())
+            .with_page_assets(self.assets.clone())
+            .with_meta_ttl_ms(self.meta_ttl_ms)
+    }
+
+    /// 内置模板表：`相对名（不含 .cshtml）→ 源码`。
+    ///
+    /// 只含 `.cshtml` 模板（文本），**不含任何 css/js/图片等静态资源**。
+    pub fn embedded_views(&self) -> Vec<(String, String)> {
+        DEFAULT_VIEWS
+            .iter()
+            .map(|view| (view.relative_name(self.layout), view.source.to_string()))
+            .collect()
     }
 
     /// 当前目录布局。
@@ -112,31 +247,18 @@ impl Views {
         // 必须先补齐默认值，宿主只传业务字段也不会渲染失败。
         let model = with_template_defaults(model);
         let full_controller = self.layout.controller(area_name, controller);
-        let renderer = ViewRenderer::with_root(&self.root)
-            .with_convention(self.layout)
-            .with_fallback_area(area::DEFAULT_AREA);
-        renderer
+        self.renderer()
             .render(&full_controller, view, view, &model)
             .map_err(|e| format!("渲染 {full_controller}/{view} 失败：{e}"))
     }
 
-    /// 渲染共享视图：
-    /// - `Flat`：`Views/Shared/{Name}.cshtml`
-    /// - `Areas`：`Areas/{Area}/Views/Shared/{Name}.cshtml`（默认区域 `Admin`）
+    /// 渲染共享片段视图（**不套** `_ViewStart` 布局，对齐 C# Partial）。
     pub fn render_shared(&self, name: &str, model: &Value) -> Result<String, String> {
         let model = with_template_defaults(model);
-        let renderer = ViewRenderer::with_root(&self.root)
-            .with_convention(self.layout);
-        let (controller, label) = match self.layout {
-            ViewLayout::Flat => ("Shared".to_string(), format!("Shared/{name}")),
-            ViewLayout::Areas => (
-                self.layout.shared_controller(area::DEFAULT_AREA),
-                format!("{}/Views/Shared/{name}", area::DEFAULT_AREA),
-            ),
-        };
-        renderer
-            .render(&controller, name, name, &model)
-            .map_err(|e| format!("渲染 {label} 失败：{e}"))
+        let controller = self.layout.shared_controller(area::DEFAULT_AREA);
+        self.renderer()
+            .render_isolated(&controller, name, name, &model)
+            .map_err(|e| format!("渲染 Shared/{name} 失败：{e}"))
     }
 
     /// 视图是否存在（用于部署自检；大小写按文件系统语义）。
@@ -172,12 +294,32 @@ impl Views {
 
     /// 按当前布局落地默认视图（只补缺失，不覆盖已有文件）。
     pub fn materialize(&self, area_name: &str) -> std::io::Result<usize> {
-        materialize_with_layout(&self.root, area_name, self.layout, false)
+        self.materialize_inner(area_name, false)
     }
 
     /// 强制刷新内置视图（覆盖已有文件；用于升级模板，调用方需自行备份定制）。
     pub fn refresh(&self, area_name: &str) -> std::io::Result<usize> {
-        materialize_with_layout(&self.root, area_name, self.layout, true)
+        self.materialize_inner(area_name, true)
+    }
+
+    /// 落地实现：路径一律由 [`DefaultView::path`] 按约定推导。
+    fn materialize_inner(&self, area_name: &str, overwrite: bool) -> std::io::Result<usize> {
+        let normalized = area::normalize(area_name)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.message()))?;
+        let mut written = 0;
+        for view in DEFAULT_VIEWS {
+            let target = view.path(self.layout, &normalized);
+            let path = self.root.join(target.replace('/', std::path::MAIN_SEPARATOR_STR));
+            if path.is_file() && !overwrite {
+                continue;
+            }
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&path, view.source)?;
+            written += 1;
+        }
+        Ok(written)
     }
 }
 
@@ -227,6 +369,11 @@ fn with_template_defaults(model: &Value) -> Value {
         ("version", json!(crate::version())),
         ("menus", json!([])),
         ("hasMenus", json!(false)),
+        ("leftMenus", json!([])),
+        ("hasLeftMenus", json!(false)),
+        ("currentPath", json!("")),
+        ("logoutUrl", json!("")),
+        ("copyright", json!("")),
     ] {
         base.entry(key.to_string()).or_insert(value);
     }
@@ -238,67 +385,12 @@ fn with_template_defaults(model: &Value) -> Value {
 /// 默认视图的规范位置是 `Admin/…`；`area` 非默认时写到 `{Area}/…`
 /// （便于项目在改区域名后仍有一份可编辑的副本）。
 pub fn materialize_for(root: impl AsRef<Path>, area_name: &str) -> std::io::Result<usize> {
-    materialize_with_layout(root.as_ref(), area_name, ViewLayout::Flat, false)
+    Views::new(root.as_ref()).materialize(area_name)
 }
 
 /// 把内置默认视图按 **C# Areas 目录规范**落地（`Areas/{Area}/Views/...`）。
 pub fn materialize_areas_for(root: impl AsRef<Path>, area_name: &str) -> std::io::Result<usize> {
-    materialize_with_layout(root.as_ref(), area_name, ViewLayout::Areas, false)
-}
-
-fn materialize_with_layout(
-    root: &Path,
-    area_name: &str,
-    layout: ViewLayout,
-    overwrite: bool,
-) -> std::io::Result<usize> {
-    let normalized = area::normalize(area_name)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.message()))?;
-    let mut written = 0;
-    for (relative, source) in DEFAULT_VIEWS {
-        let (target_relative, content) = match *relative {
-            // 布局与共享视图：路径由 dhrust 的约定统一给出
-            "Shared/_Layout.cshtml" => {
-                let target = match layout {
-                    ViewLayout::Flat => "Shared/_Layout.cshtml".to_string(),
-                    ViewLayout::Areas => layout.view_path(&normalized, "Shared", "_AdminLayout"),
-                };
-                (target, (*source).to_string())
-            }
-            "Shared/Prompt.cshtml" => (
-                layout.shared_path(&normalized, "Prompt"),
-                (*source).to_string(),
-            ),
-            other => {
-                let (controller, view) = other
-                    .strip_prefix("Admin/")
-                    .and_then(|tail| tail.rsplit_once('/'))
-                    .map(|(controller, file)| {
-                        (
-                            controller.to_string(),
-                            file.trim_end_matches(".cshtml").to_string(),
-                        )
-                    })
-                    .unwrap_or_else(|| ("Home".to_string(), "Index".to_string()));
-                let target = layout.view_path(&normalized, &controller, &view);
-                let content = source.replace(
-                    "Layout = \"Shared/_Layout\"",
-                    &format!("Layout = \"{}\"", layout.layout_name(&normalized)),
-                );
-                (target, content)
-            }
-        };
-        let path = root.join(target_relative.replace('/', std::path::MAIN_SEPARATOR_STR));
-        if path.is_file() && !overwrite {
-            continue;
-        }
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&path, content)?;
-        written += 1;
-    }
-    Ok(written)
+    Views::areas(root.as_ref()).materialize(area_name)
 }
 
 /// 把内置默认视图落到**默认区域**（`Admin`）目录（兼容入口）。
@@ -355,7 +447,8 @@ mod tests {
         let views = Views::areas(&dir);
         assert_eq!(views.materialize("Admin").unwrap(), DEFAULT_VIEWS.len());
         assert!(dir.join("Admin/Views/Config/Index.cshtml").is_file());
-        assert!(dir.join("Admin/Views/Shared/_AdminLayout.cshtml").is_file());
+        assert!(dir.join("Admin/Views/Shared/_Layout.cshtml").is_file());
+        assert!(dir.join("Admin/Views/_ViewStart.cshtml").is_file());
         assert!(dir.join("Admin/Views/Shared/Prompt.cshtml").is_file());
 
         let html = views
@@ -365,6 +458,36 @@ mod tests {
         assert!(text.contains("站点设置"), "{}", &text[..text.len().min(400)]);
         assert!(text.contains("示例站点"), "{}", &text[..text.len().min(800)]);
         assert!(html.contains("</html>"), "应套用 Areas 布局");
+        // 顶部 + 左侧菜单壳必须存在
+        assert!(html.contains("layui-layout-admin"), "缺少框架布局");
+        assert!(html.contains("layui-nav-tree"), "缺少左侧菜单");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn login_page_opts_out_of_layout_by_convention() {
+        let dir = temp_dir("login-nolayout");
+        let views = Views::areas(&dir);
+        views.materialize("Admin").unwrap();
+        let html = views
+            .render("Admin", "Login", "Index", &json!({ "displayName": "站点" }))
+            .unwrap();
+        assert!(html.contains("login_body"), "应是登录整页");
+        assert!(!html.contains("layui-layout-admin"), "登录页不套后台框架");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn library_views_render_without_materialize() {
+        // 不落地任何文件，全部走库内置模板 + 回退区域
+        let dir = temp_dir("embedded");
+        let views = Views::areas(&dir);
+        let html = views
+            .render("Admin", "Config", "Index", &json!({ "siteName": "内置" }))
+            .unwrap();
+        let text = crate::decode_html_entities(&html);
+        assert!(text.contains("内置"), "{}", &text[..text.len().min(400)]);
+        assert!(html.contains("layui-layout-admin"), "布局应来自库内置模板");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

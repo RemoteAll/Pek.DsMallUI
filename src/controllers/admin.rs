@@ -33,6 +33,7 @@ use crate::backend::{
     default_settings, value_as_bool, value_as_i64, AdminBackend, AdminUser, MemoryBackend,
 };
 use crate::captcha;
+use crate::menu::{self, AdminMenu};
 use crate::views::Views;
 
 /// 默认后台区域名（与 C# 默认 `Admin` 一致）。
@@ -58,6 +59,10 @@ pub struct AdminArea {
     captcha_enabled: bool,
     /// 登录成功后的扩展头（由消费方注入会话 Cookie 等）。
     login_hook: Option<LoginHook>,
+    /// 左侧菜单（消费方可覆盖，默认只有本 crate 自己的页面）。
+    menus: Vec<AdminMenu>,
+    /// 退出登录地址（默认 `/{area}/logout`，由宿主提供路由）。
+    logout_url: String,
 }
 
 impl AdminArea {
@@ -72,6 +77,8 @@ impl AdminArea {
             upload_prefix: "/upload".to_string(),
             captcha_enabled: true,
             login_hook: None,
+            menus: Vec::new(),
+            logout_url: format!("{}/logout", area::route_prefix(area::DEFAULT_AREA)),
         }
     }
 
@@ -110,6 +117,20 @@ impl AdminArea {
     /// 覆盖登录成功后的落地页（默认 `/{area}/home/index`）。
     pub fn with_home(mut self, home: impl Into<String>) -> AdminArea {
         self.home = home.into();
+        self
+    }
+
+    /// 设置左侧菜单（消费方追加自己的功能页；不设则用 [`menu::default_menus`]）。
+    ///
+    /// `url` 里可写 `{area}` 占位符，会按实际区域路由前缀替换。
+    pub fn with_menus(mut self, menus: Vec<AdminMenu>) -> AdminArea {
+        self.menus = menus;
+        self
+    }
+
+    /// 设置退出登录地址（默认 `/{area}/logout`，宿主需提供该路由）。
+    pub fn with_logout_url(mut self, url: impl Into<String>) -> AdminArea {
+        self.logout_url = url.into();
         self
     }
 
@@ -152,6 +173,9 @@ impl AdminArea {
         let segment = area::route_segment(&self.area);
         let display_name = self.backend.display_name();
         let upload_prefix = self.upload_prefix.clone();
+        // 菜单原样传递给模型（`{area}` 占位符由模型按实际区域替换）
+        let menus = self.menus.clone();
+        let logout_url = self.logout_url.clone();
 
         // 登录图形验证码：`GET /captcha`（仅启用时挂载）
         if self.captcha_enabled {
@@ -173,12 +197,16 @@ impl AdminArea {
                 let area_name = area_name.clone();
                 let display_name = display_name.clone();
                 let upload_prefix = upload_prefix.clone();
+                let menus = menus.clone();
+                let logout_url = logout_url.clone();
                 move |ctx: &Ctx| {
                     let model = home_model(
                         &*backend,
                         &display_name,
                         &area_name,
                         &upload_prefix,
+                        &menus,
+                        &logout_url,
                         Some(ctx),
                     );
                     render(&views, &area_name, "Home", "Index", &model)
@@ -195,8 +223,18 @@ impl AdminArea {
                 let views = views.clone();
                 let area_name = area_name.clone();
                 let display_name = display_name.clone();
+                let menus = menus.clone();
+                let logout_url = logout_url.clone();
                 move |ctx: &Ctx| {
-                    let model = config_model(&*backend, &display_name, &area_name, Some(ctx), false);
+                    let model = config_model(
+                        &*backend,
+                        &display_name,
+                        &area_name,
+                        &menus,
+                        &logout_url,
+                        Some(ctx),
+                        false,
+                    );
                     render(&views, &area_name, "Config", "Index", &model)
                 }
             })
@@ -258,16 +296,27 @@ impl AdminArea {
     /// 组装设置页模型（控制器与测试共用）。
     pub fn page_model(&self, saved: bool) -> Value {
         let display_name = self.backend.display_name();
-        config_model(&*self.backend, &display_name, &self.area, None, saved)
+        config_model(
+            &*self.backend,
+            &display_name,
+            &self.area,
+            &self.menus,
+            &self.logout_url,
+            None,
+            saved,
+        )
     }
 }
 
 /// 后台首页模型（控制台卡片 + 菜单）。
+#[allow(clippy::too_many_arguments)]
 fn home_model(
     backend: &dyn AdminBackend,
     display_name: &str,
     area_name: &str,
     upload_prefix: &str,
+    configured_menus: &[AdminMenu],
+    logout_url: &str,
     ctx: Option<&Ctx>,
 ) -> Value {
     let settings = backend.settings();
@@ -278,23 +327,18 @@ fn home_model(
         .trim()
         .to_string();
     let route = area::route_prefix(area_name);
-    let menus = json!([
-        {
-            "name": "站点设置",
-            "url": format!("{route}/config/index"),
-            "desc": "站点名称、SEO、客服、页脚与自定义 HTML"
-        },
-        {
-            "name": "登录页",
-            "url": format!("{route}/login/index"),
-            "desc": "后台登录入口（账号由 AdminBackend 提供）"
-        },
-        {
-            "name": "UEditor 配置",
-            "url": "/fileuploader?action=config",
-            "desc": "富文本编辑器后端配置（JSON，前端初始化用）"
+    let (left_menus, has_left_menus) = left_menus(configured_menus, area_name);
+    let mut shortcuts = Vec::new();
+    for menu in resolved_menus(configured_menus, area_name) {
+        if menu.has_children() {
+            for child in &menu.children {
+                shortcuts.push(json!({ "name": child.title, "url": child.url, "desc": menu.title }));
+            }
+        } else {
+            shortcuts.push(json!({ "name": menu.title, "url": menu.url, "desc": "" }));
         }
-    ]);
+    }
+    let has_menus = !shortcuts.is_empty();
 
     json!({
         "title": format!("管理后台 - {display_name}"),
@@ -305,8 +349,14 @@ fn home_model(
         "areaRoute": route,
         "uploadPrefix": upload_prefix,
         "version": crate::version(),
-        "menus": menus,
-        "hasMenus": true,
+        "menus": shortcuts,
+        "hasMenus": has_menus,
+        "leftMenus": left_menus,
+        "hasLeftMenus": has_left_menus,
+        "currentPath": current_path(ctx),
+        "home": home_route(area_name),
+        "logoutUrl": resolve_url(logout_url, area_name),
+        "copyright": format!("@ {display_name}"),
     })
 }
 
@@ -315,6 +365,8 @@ fn config_model(
     backend: &dyn AdminBackend,
     display_name: &str,
     area_name: &str,
+    configured_menus: &[AdminMenu],
+    logout_url: &str,
     ctx: Option<&Ctx>,
     _saved: bool,
 ) -> Value {
@@ -327,6 +379,7 @@ fn config_model(
             base.entry(key).or_insert(value);
         }
     }
+    let (left_menus, has_left_menus) = left_menus(configured_menus, area_name);
     base.insert("title".into(), json!(format!("站点设置 - {display_name}")));
     base.insert("displayName".into(), json!(display_name));
     base.insert("userName".into(), json!(current_user(ctx)));
@@ -334,6 +387,12 @@ fn config_model(
     base.insert("areaName".into(), json!(area_name));
     base.insert("areaRoute".into(), json!(area::route_prefix(area_name)));
     base.insert("currentAction".into(), json!("Index"));
+    base.insert("leftMenus".into(), left_menus);
+    base.insert("hasLeftMenus".into(), json!(has_left_menus));
+    base.insert("currentPath".into(), json!(current_path(ctx)));
+    base.insert("home".into(), json!(home_route(area_name)));
+    base.insert("logoutUrl".into(), json!(resolve_url(logout_url, area_name)));
+    base.insert("copyright".into(), json!(format!("@ {display_name}")));
 
     // 模板里的单选/开关直接读 bool，整数读 Int32——后端可能存的是字符串，这里统一归一化。
     for key in [
@@ -454,6 +513,35 @@ fn current_user(ctx: Option<&Ctx>) -> String {
     ctx.and_then(|c| c.state_value("user"))
         .unwrap_or("")
         .to_string()
+}
+
+/// 当前请求路径（菜单高亮用）。
+fn current_path(ctx: Option<&Ctx>) -> String {
+    ctx.map(|c| c.req.path.clone()).unwrap_or_default()
+}
+
+/// 把 `{area}` 占位符换成实际路由前缀。
+fn resolve_url(url: &str, area_name: &str) -> String {
+    url.replace("{area}", &area::route_prefix(area_name))
+}
+
+/// 解析菜单：未配置时用库默认，再把 `{area}` 占位符换成实际路由前缀。
+fn resolved_menus(configured: &[AdminMenu], area_name: &str) -> Vec<AdminMenu> {
+    let base = if configured.is_empty() {
+        menu::default_menus()
+    } else {
+        configured.to_vec()
+    };
+    base.into_iter()
+        .map(|item| item.with_area_prefix(area_name))
+        .collect()
+}
+
+/// 左侧菜单 → 模板 JSON（`(数组, 是否非空)`）。
+fn left_menus(configured: &[AdminMenu], area_name: &str) -> (Value, bool) {
+    let menus = resolved_menus(configured, area_name);
+    let has = !menus.is_empty();
+    (AdminMenu::list_to_value(&menus), has)
 }
 
 /// 渲染视图；失败返回 JSON 500（含具体路径，便于定位）。
