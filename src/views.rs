@@ -1,9 +1,9 @@
-//! 视图约定：`Areas/{Area}/Views/{Controller}/{Action}.cshtml`（Razor 子集，双端可渲染）。
+﻿//! 视图约定：`Areas/{Area}/Views/{Controller}/{Action}.cshtml`（Razor 子集，双端可渲染）。
 //!
 //! 本 crate 在 `dhrust` 的 [`ViewRenderer`] 之上只做三件事：
 //! 1. **Area 视图位置**由 [`ViewLayout`]（= `dhrust::net::controller::ViewConvention`）统一给出，
 //!    查找顺序、项目覆盖库、`Shared` 回退、`_ViewStart` 约定布局全部复用 `dhrust`；
-//! 2. **默认视图表**（[`DEFAULT_VIEWS`]）以 `(区域, 控制器, 视图, 源码)` 的**数据**形式声明，
+//! 2. **内置视图表**由 `build.rs` **编译期扫描 `Views/` 目录**生成（不手写清单），
 //!    路径一律经约定推导，不在这里写死字符串路径；
 //! 3. **页面级静态资源**（`{视图}.css` / `{视图}.js`）只登记磁盘目录与前缀，
 //!    由 `dhrust` 按约定注入 —— **不读内容、不嵌入二进制**。
@@ -15,6 +15,14 @@
 //! Areas/Admin/Views/Config/Index.cshtml    ← 内容页（无需写 Layout）
 //! ```
 //!
+//! **多份布局时怎么选（与 C# 同口径，优先级从高到低）**：
+//! 1. 页面里 `Layout = "_LayoutX"` —— 显式指定，最高优先级；
+//! 2. 页面里 `Layout = ""` —— 明确「不套布局」（独立整页，如登录页）；
+//! 3. `_ViewStart.cshtml` 里的 `Layout = "_Layout"` —— 区域默认值（就近目录生效，
+//!    `Areas/Admin/Views/Config/_ViewStart.cshtml` 优先于 `Areas/Admin/Views/_ViewStart.cshtml`）。
+//!
+//! 所以「同时存在多个布局」不会歧义：**页面显式 > 就近 `_ViewStart` > 更上层 `_ViewStart`**。
+//!
 //! 视图引擎是 **Razor 子集**（见 DH.RustBase `Doc/Razor子集模板引擎架构.md` §3.2）：
 //! 支持 `@expr`、`@if`、`@foreach`、`@{ var x = ... }`、`Layout`/`RenderBody`/`section`/
 //! `Html.PartialAsync`；不支持 `@using`/`@inject`/`@helper`/自由方法调用。
@@ -25,115 +33,67 @@ use dhrust::net::controller::{PageAssets, ViewRenderer};
 use serde_json::{json, Map, Value};
 
 use crate::area;
-
-/// 默认视图的声明方式（决定它落在约定里的哪个目录）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DefaultKind {
-    /// 控制器视图：`{Controller}/{View}`（`Config/Index`）。
-    View,
-    /// 共享视图：`Shared/{Name}`（`_Layout` / `Prompt`）。
-    Shared,
-    /// 区域根：`{Area}/Views/{Name}`（`_ViewStart`）。
-    AreaRoot,
-}
-
-/// 一个内置默认视图（库自带的「引用库视图」）。
-#[derive(Debug, Clone, Copy)]
-pub struct DefaultView {
-    /// 归属区域（规范位置 `Admin`，对齐 C# `Areas/Admin`）。
-    pub area: &'static str,
-    /// 声明方式。
-    pub kind: DefaultKind,
-    /// 控制器名（`kind = View` 时使用；其它情况留空）。
-    pub controller: &'static str,
-    /// 视图 / 共享视图 / 区域根文件名（不含 `.cshtml`）。
-    pub name: &'static str,
-    /// 模板源码。
-    pub source: &'static str,
-}
-
-impl DefaultView {
-    /// 该视图相对视图根的路径（含 `.cshtml`）。
-    pub fn path(&self, layout: ViewLayout, area_name: &str) -> String {
-        let area_name = if area_name.trim().is_empty() {
-            self.area
-        } else {
-            area_name
-        };
-        match self.kind {
-            DefaultKind::View => layout.view_path(area_name, self.controller, self.name),
-            DefaultKind::Shared => layout.shared_path(area_name, self.name),
-            DefaultKind::AreaRoot => layout.area_root_path(area_name, self.name),
-        }
-    }
-
-    /// 该视图相对视图根的相对名（不含 `.cshtml`，供内置模板查找）。
-    pub fn relative_name(&self, layout: ViewLayout) -> String {
-        self.path(layout, self.area)
-            .trim_end_matches(".cshtml")
-            .to_string()
-    }
-}
-
-/// 内置默认视图表（库自带；项目同名文件优先，未覆盖时用这里的模板）。
-pub const DEFAULT_VIEWS: &[DefaultView] = &[
-    // 区域约定布局（C# `_ViewStart.cshtml` 同口径）：所有页面默认套 `_Layout`。
-    DefaultView {
-        area: "Admin",
-        kind: DefaultKind::AreaRoot,
-        controller: "",
-        name: "_ViewStart",
-        source: include_str!("../Views/_ViewStart.cshtml"),
-    },
-    // 登录页是独立整页，用就近的 `_ViewStart` 关掉布局（C# 里就是 `Layout = null`）。
-    DefaultView {
-        area: "Admin",
-        kind: DefaultKind::View,
-        controller: "Login",
-        name: "_ViewStart",
-        source: include_str!("../Views/Admin/Login/_ViewStart.cshtml"),
-    },
-    // 布局与共享视图
-    DefaultView {
-        area: "Admin",
-        kind: DefaultKind::Shared,
-        controller: "",
-        name: "_Layout",
-        source: include_str!("../Views/Shared/_Layout.cshtml"),
-    },
-    DefaultView {
-        area: "Admin",
-        kind: DefaultKind::Shared,
-        controller: "",
-        name: "Prompt",
-        source: include_str!("../Views/Shared/Prompt.cshtml"),
-    },
-    // 页面
-    DefaultView {
-        area: "Admin",
-        kind: DefaultKind::View,
-        controller: "Home",
-        name: "Index",
-        source: include_str!("../Views/Admin/Home/Index.cshtml"),
-    },
-    DefaultView {
-        area: "Admin",
-        kind: DefaultKind::View,
-        controller: "Config",
-        name: "Index",
-        source: include_str!("../Views/Admin/Config/Index.cshtml"),
-    },
-    DefaultView {
-        area: "Admin",
-        kind: DefaultKind::View,
-        controller: "Login",
-        name: "Index",
-        source: include_str!("../Views/Admin/Login/Index.cshtml"),
-    },
-];
+// 编译期清单（`build.rs` 扫描 `Areas/` 生成）：相对路径 → 模板源码。
+// 相对路径与 `ViewConvention::Areas` 的查找路径逐字节一致 —— 目录结构即约定。
+include!(concat!(env!("OUT_DIR"), "/embedded_views.rs"));
 
 pub use dhrust::net::controller::ViewConvention as ViewLayout;
 
+/// 内置视图目录（`Areas`，对齐 C#）；清单里的相对路径就是它下面的路径。
+pub const VIEWS_ROOT_NAME: &str = "Areas";
+
+/// 内置视图清单（编译期生成）：`(相对路径, 源码)`。
+///
+/// 例如 `("Admin/Views/Shared/_Layout.cshtml", "…")`；没有分类函数、没有区域常量：
+/// 想加/改视图就往 `Areas/{区域}/Views/…` 动文件，重新编译即可。
+pub fn embedded_view_files() -> &'static [(&'static str, &'static str)] {
+    EMBEDDED_VIEWS
+}
+
+/// 清单里视图的「相对名」（不含 `.cshtml`，供 `ViewRenderer::with_embedded_views` 使用）。
+pub fn embedded_names(layout: ViewLayout) -> Vec<(String, String)> {
+    embedded_files_for(layout)
+        .into_iter()
+        .map(|(path, source)| {
+            (
+                path.trim_end_matches(".cshtml").to_string(),
+                source.to_string(),
+            )
+        })
+        .collect()
+}
+
+/// 清单 → `(相对路径（含 .cshtml）, 源码)`，路径按约定映射：
+///
+/// - `Areas`：与清单**逐字节一致**（C# 规范，目录即约定）；
+/// - `Flat`：按同一套约定函数换算（`Shared/` → 根 `Shared/`，区域根文件 → `{Area}/`）。
+pub fn embedded_files_for(layout: ViewLayout) -> Vec<(String, &'static str)> {
+    EMBEDDED_VIEWS
+        .iter()
+        .map(|(path, source)| {
+            let mapped = match layout {
+                ViewLayout::Areas => (*path).to_string(),
+                ViewLayout::Flat => flat_path(layout, path).unwrap_or_else(|| (*path).to_string()),
+            };
+            (mapped, *source)
+        })
+        .collect()
+}
+
+/// `Areas` 相对路径 → `Flat` 相对路径（全部经 [`ViewLayout`] 的约定函数推导）。
+fn flat_path(layout: ViewLayout, relative: &str) -> Option<String> {
+    let without_ext = relative.strip_suffix(".cshtml")?;
+    let (area, rest) = without_ext.split_once("/Views/")?;
+    if let Some(name) = rest.strip_prefix("Shared/") {
+        return Some(layout.shared_path(area, name));
+    }
+    if !rest.contains('/') {
+        // 区域根约定文件（`_ViewStart` 等）
+        return Some(layout.area_root_path(area, rest));
+    }
+    let (controller, view) = rest.rsplit_once('/')?;
+    Some(layout.view_path(area, controller, view))
+}
 /// 视图根（`Views` / `Areas` 目录）。
 #[derive(Debug, Clone)]
 pub struct Views {
@@ -193,14 +153,11 @@ impl Views {
             .with_meta_ttl_ms(self.meta_ttl_ms)
     }
 
-    /// 内置模板表：`相对名（不含 .cshtml）→ 源码`。
+    /// 内置模板表：`相对名（不含 .cshtml）→ 源码`（由目录清单 + 约定推导）。
     ///
     /// 只含 `.cshtml` 模板（文本），**不含任何 css/js/图片等静态资源**。
     pub fn embedded_views(&self) -> Vec<(String, String)> {
-        DEFAULT_VIEWS
-            .iter()
-            .map(|view| (view.relative_name(self.layout), view.source.to_string()))
-            .collect()
+        embedded_names(self.layout)
     }
 
     /// 当前目录布局。
@@ -302,13 +259,13 @@ impl Views {
         self.materialize_inner(area_name, true)
     }
 
-    /// 落地实现：路径一律由 [`DefaultView::path`] 按约定推导。
+    /// 落地实现：**清单里的相对路径原样落盘**（`Areas` 约定）；
+    /// `Flat` 约定下按同一条机械变换去掉 `Views/` 段。
     fn materialize_inner(&self, area_name: &str, overwrite: bool) -> std::io::Result<usize> {
-        let normalized = area::normalize(area_name)
+        let _ = area::normalize(area_name)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.message()))?;
         let mut written = 0;
-        for view in DEFAULT_VIEWS {
-            let target = view.path(self.layout, &normalized);
+        for (target, source) in embedded_files_for(self.layout) {
             let path = self.root.join(target.replace('/', std::path::MAIN_SEPARATOR_STR));
             if path.is_file() && !overwrite {
                 continue;
@@ -316,7 +273,7 @@ impl Views {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::write(&path, view.source)?;
+            std::fs::write(&path, source)?;
             written += 1;
         }
         Ok(written)
@@ -380,10 +337,10 @@ fn with_template_defaults(model: &Value) -> Value {
     Value::Object(base)
 }
 
-/// 把内置默认视图落到**指定区域**目录（只补缺失，不覆盖已有文件）。
+/// 把内置视图按约定落到**指定视图根**（只补缺失，不覆盖已有文件）。
 ///
-/// 默认视图的规范位置是 `Admin/…`；`area` 非默认时写到 `{Area}/…`
-/// （便于项目在改区域名后仍有一份可编辑的副本）。
+/// 落盘位置就是库内目录结构（`Areas/{区域}/Views/…` 或 `Flat` 等价路径），
+/// **不按调用方区域复制**：改区域名靠回退解析，若要定制就在对应位置放同名文件。
 pub fn materialize_for(root: impl AsRef<Path>, area_name: &str) -> std::io::Result<usize> {
     Views::new(root.as_ref()).materialize(area_name)
 }
@@ -412,7 +369,7 @@ mod tests {
     fn materialize_writes_defaults_then_skips_existing() {
         let dir = temp_dir("materialize");
         let first = materialize(&dir).unwrap();
-        assert_eq!(first, DEFAULT_VIEWS.len());
+        assert_eq!(first, EMBEDDED_VIEWS.len());
         let second = materialize(&dir).unwrap();
         assert_eq!(second, 0, "二次落地必须全部跳过（幂等）");
         assert!(dir.join("Admin/Config/Index.cshtml").is_file());
@@ -421,15 +378,15 @@ mod tests {
     }
 
     #[test]
-    fn materialize_for_writes_area_copy() {
+    fn materialize_for_writes_library_views() {
         let dir = temp_dir("area");
         let written = materialize_for(&dir, "Biz").unwrap();
-        assert_eq!(written, DEFAULT_VIEWS.len());
-        assert!(dir.join("Biz/Config/Index.cshtml").is_file());
-        assert!(dir.join("Biz/Home/Index.cshtml").is_file());
-        // 共享视图不随区域复制
+        assert_eq!(written, EMBEDDED_VIEWS.len());
+        // 库视图位置 = C# 约定位置（不按调用方区域复制；改名区域走回退解析）
+        assert!(dir.join("Admin/Config/Index.cshtml").is_file());
         assert!(dir.join("Shared/_Layout.cshtml").is_file());
-        assert!(!dir.join("Biz/Shared/_Layout.cshtml").exists());
+        // 二次落地幂等
+        assert_eq!(materialize_for(&dir, "Biz").unwrap(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -445,7 +402,7 @@ mod tests {
     fn areas_layout_materializes_and_renders() {
         let dir = temp_dir("areas");
         let views = Views::areas(&dir);
-        assert_eq!(views.materialize("Admin").unwrap(), DEFAULT_VIEWS.len());
+        assert_eq!(views.materialize("Admin").unwrap(), EMBEDDED_VIEWS.len());
         assert!(dir.join("Admin/Views/Config/Index.cshtml").is_file());
         assert!(dir.join("Admin/Views/Shared/_Layout.cshtml").is_file());
         assert!(dir.join("Admin/Views/_ViewStart.cshtml").is_file());
@@ -458,9 +415,13 @@ mod tests {
         assert!(text.contains("站点设置"), "{}", &text[..text.len().min(400)]);
         assert!(text.contains("示例站点"), "{}", &text[..text.len().min(800)]);
         assert!(html.contains("</html>"), "应套用 Areas 布局");
-        // 顶部 + 左侧菜单壳必须存在
+        // 顶部 + 左侧菜单由局部视图渲染（`_Layout` 里 PartialAsync 引用）
         assert!(html.contains("layui-layout-admin"), "缺少框架布局");
-        assert!(html.contains("layui-nav-tree"), "缺少左侧菜单");
+        assert!(html.contains("layui-logo"), "缺少顶部导航局部视图");
+        assert!(html.contains("layui-nav-tree"), "缺少左侧菜单局部视图");
+        // 局部视图单独存在，可被项目覆盖
+        assert!(dir.join("Admin/Views/Shared/_Navbar.cshtml").is_file());
+        assert!(dir.join("Admin/Views/Shared/_Left.cshtml").is_file());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
