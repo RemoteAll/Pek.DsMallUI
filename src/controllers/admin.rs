@@ -66,6 +66,8 @@ pub struct AdminArea {
     login_hook: Option<LoginHook>,
     /// 左侧菜单（消费方可覆盖，默认只有本 crate 自己的页面）。
     menus: Vec<AdminMenu>,
+    /// 运行期菜单来源（设置后优先于 `menus`；用于从菜单表/文件读取）。
+    menu_provider: Option<crate::menu::MenuProvider>,
     /// 退出登录地址（默认 `/{area}/logout`，由宿主提供路由）。
     logout_url: String,
     /// 页面资源清单（对齐 C# `PekHtml`：css / head / footer，按 URL 去重且保序）。
@@ -87,6 +89,7 @@ impl AdminArea {
             login_failures: Arc::new(AtomicU32::new(0)),
             login_hook: None,
             menus: Vec::new(),
+            menu_provider: None,
             logout_url: format!("{}/logout", area::route_prefix(area::DEFAULT_AREA)),
             assets: crate::assets::Assets::new(),
         }
@@ -95,6 +98,12 @@ impl AdminArea {
     /// 登记后台页面资源（对齐 C# `PekHtml.AddCssFileParts` / `AddScriptParts`）。
     pub fn with_assets(mut self, assets: crate::assets::Assets) -> AdminArea {
         self.assets = assets;
+        self
+    }
+
+    /// 设置菜单来源（每次请求回调一次；用于后台维护菜单后立即生效）。
+    pub fn with_menu_provider(mut self, provider: crate::menu::MenuProvider) -> AdminArea {
+        self.menu_provider = Some(provider);
         self
     }
 
@@ -196,7 +205,10 @@ impl AdminArea {
         let display_name = self.backend.display_name();
         let upload_prefix = self.upload_prefix.clone();
         // 菜单原样传递给模型（`{area}` 占位符由模型按实际区域替换）
-        let menus = self.menus.clone();
+        let menu_provider = self.menu_provider.clone().unwrap_or_else(|| {
+            let fixed = self.menus.clone();
+            std::sync::Arc::new(move || fixed.clone())
+        });
         let logout_url = self.logout_url.clone();
 
         // 登录图形验证码：`GET /captcha`（仅启用时挂载）
@@ -219,7 +231,7 @@ impl AdminArea {
                 let area_name = area_name.clone();
                 let display_name = display_name.clone();
                 let upload_prefix = upload_prefix.clone();
-                let menus = menus.clone();
+                let menus = menu_provider();
                 let logout_url = logout_url.clone();
                 move |ctx: &Ctx| {
                     let model = home_model(
@@ -241,7 +253,7 @@ impl AdminArea {
                 let area_name = area_name.clone();
                 let display_name = display_name.clone();
                 let upload_prefix = upload_prefix.clone();
-                let menus = menus.clone();
+                let menus = menu_provider();
                 let logout_url = logout_url.clone();
                 move |ctx: &Ctx| {
                     let model = home_model(
@@ -278,7 +290,7 @@ impl AdminArea {
                 let views = views.clone();
                 let area_name = area_name.clone();
                 let display_name = display_name.clone();
-                let menus = menus.clone();
+                let menus = menu_provider();
                 let logout_url = logout_url.clone();
                 move |ctx: &Ctx| {
                     let model = config_model(

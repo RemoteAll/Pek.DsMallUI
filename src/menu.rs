@@ -8,6 +8,9 @@ use serde_json::{json, Value};
 
 use crate::area;
 
+/// 运行期菜单来源：每次渲染取一次，便于后台维护菜单后立即生效。
+pub type MenuProvider = std::sync::Arc<dyn Fn() -> Vec<AdminMenu> + Send + Sync>;
+
 /// 一个菜单节点：叶子（有 `url`）或分组（有 `children`）。
 #[derive(Debug, Clone, Default)]
 pub struct AdminMenu {
